@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Arquibancada 3D - Visualização</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #1a1a2e; font-family: Arial, sans-serif; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #fff;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            max-width: 320px;
+            line-height: 1.5;
+        }
+        #info h2 { margin-bottom: 8px; font-size: 16px; color: #4fc3f7; }
+        #info .spec { color: #aaa; }
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #fff;
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 12px;
+            text-align: center;
+        }
+        #legend {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: #fff;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+        #legend h3 { margin-bottom: 8px; color: #4fc3f7; font-size: 14px; }
+        .legend-item { display: flex; align-items: center; margin: 4px 0; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; margin-right: 8px; }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h2>Arquibancada 3D</h2>
+        <div class="spec">Centro quadrado: 6m x 6m</div>
+        <div class="spec">Niveis: 5 (cada +0.4m altura, 0.5m profundidade)</div>
+        <div class="spec">Altura total: 2.0m | Profundidade: 2.5m</div>
+        <div class="spec">Retas: praticaveis 2x1m e 2x0.5m</div>
+        <div class="spec">Curvas: metalon e madeira</div>
+        <div class="spec">Corrimao lateral (niveis 2-5) e total (nivel 5)</div>
+    </div>
+    <div id="legend">
+        <h3>Legenda</h3>
+        <div class="legend-item"><div class="legend-color" style="background:#8d6e63"></div>Praticaveis (retas)</div>
+        <div class="legend-item"><div class="legend-color" style="background:#a1887f"></div>Metalon + madeira (curvas)</div>
+        <div class="legend-item"><div class="legend-color" style="background:#78909c"></div>Corrimao</div>
+        <div class="legend-item"><div class="legend-color" style="background:rgba(100,181,246,0.3); border:1px solid #64b5f6"></div>Area central (6x6m)</div>
+    </div>
+    <div id="controls">Arrastar para girar | Scroll para zoom | Shift+arrastar para mover</div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Scene setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a2e);
+        scene.fog = new THREE.FogExp2(0x1a1a2e, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(12, 10, 12);
+        camera.lookAt(0, 1, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.target.set(0, 1, 0);
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0x404060, 0.6);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        dirLight.position.set(10, 15, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.set(2048, 2048);
+        dirLight.shadow.camera.near = 1;
+        dirLight.shadow.camera.far = 50;
+        dirLight.shadow.camera.left = -15;
+        dirLight.shadow.camera.right = 15;
+        dirLight.shadow.camera.top = 15;
+        dirLight.shadow.camera.bottom = -15;
+        scene.add(dirLight);
+
+        const fillLight = new THREE.DirectionalLight(0x4fc3f7, 0.3);
+        fillLight.position.set(-8, 5, -8);
+        scene.add(fillLight);
+
+        // --- Materials ---
+        const woodMat = new THREE.MeshStandardMaterial({
+            color: 0x8d6e63,
+            roughness: 0.8,
+            metalness: 0.1
+        });
+        const curveMat = new THREE.MeshStandardMaterial({
+            color: 0xa1887f,
+            roughness: 0.6,
+            metalness: 0.2
+        });
+        const railMat = new THREE.MeshStandardMaterial({
+            color: 0x78909c,
+            roughness: 0.3,
+            metalness: 0.7
+        });
+        const groundMat = new THREE.MeshStandardMaterial({
+            color: 0x2d2d44,
+            roughness: 0.9,
+            metalness: 0.0
+        });
+        const centerMat = new THREE.MeshStandardMaterial({
+            color: 0x64b5f6,
+            roughness: 0.5,
+            metalness: 0.0,
+            transparent: true,
+            opacity: 0.15
+        });
+
+        // --- Constants ---
+        const SQUARE_SIZE = 6;       // 6m per side
+        const HALF = SQUARE_SIZE / 2; // 3m
+        const LEVELS = 5;
+        const STEP_HEIGHT = 0.4;     // 0.4m per level
+        const STEP_DEPTH = 0.5;      // 0.5m depth per step
+        const STEP_THICKNESS = 0.05; // thin platform surface
+        const RAIL_HEIGHT = 0.9;     // railing height
+        const RAIL_RADIUS = 0.025;   // railing tube radius
+
+        // --- Ground plane ---
+        const groundGeo = new THREE.PlaneGeometry(30, 30);
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // --- Central area indicator ---
+        const centerGeo = new THREE.PlaneGeometry(SQUARE_SIZE, SQUARE_SIZE);
+        const centerPlane = new THREE.Mesh(centerGeo, centerMat);
+        centerPlane.rotation.x = -Math.PI / 2;
+        centerPlane.position.y = 0.01;
+        scene.add(centerPlane);
+
+        // Draw center square outline
+        const centerOutlineGeo = new THREE.BufferGeometry().setFromPoints([
+            new THREE.Vector3(-HALF, 0.02, -HALF),
+            new THREE.Vector3(HALF, 0.02, -HALF),
+            new THREE.Vector3(HALF, 0.02, HALF),
+            new THREE.Vector3(-HALF, 0.02, HALF),
+            new THREE.Vector3(-HALF, 0.02, -HALF),
+        ]);
+        const centerOutline = new THREE.Line(
+            centerOutlineGeo,
+            new THREE.LineBasicMaterial({ color: 0x64b5f6, linewidth: 2 })
+        );
+        scene.add(centerOutline);
+
+        // --- Helper: create a bleacher step (box) ---
+        function createStep(width, depth, height, x, y, z, material) {
+            const geo = new THREE.BoxGeometry(width, height, depth);
+            const mesh = new THREE.Mesh(geo, material);
+            mesh.position.set(x, y, z);
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            scene.add(mesh);
+            return mesh;
+        }
+
+        // --- Helper: create railing post + rail ---
+        function createRailPost(x, y, z) {
+            const postGeo = new THREE.CylinderGeometry(RAIL_RADIUS, RAIL_RADIUS, RAIL_HEIGHT, 8);
+            const post = new THREE.Mesh(postGeo, railMat);
+            post.position.set(x, y + RAIL_HEIGHT / 2, z);
+            post.castShadow = true;
+            scene.add(post);
+            return post;
+        }
+
+        function createRailSegment(x1, y1, z1, x2, y2, z2) {
+            const dir = new THREE.Vector3(x2 - x1, y2 - y1, z2 - z1);
+            const length = dir.length();
+            const geo = new THREE.CylinderGeometry(RAIL_RADIUS, RAIL_RADIUS, length, 8);
+            const mesh = new THREE.Mesh(geo, railMat);
+
+            const mid = new THREE.Vector3((x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2);
+            mesh.position.copy(mid);
+
+            const axis = new THREE.Vector3(0, 1, 0);
+            dir.normalize();
+            const quat = new THREE.Quaternion().setFromUnitVectors(axis, dir);
+            mesh.setRotationFromQuaternion(quat);
+
+            mesh.castShadow = true;
+            scene.add(mesh);
+            return mesh;
+        }
+
+        // --- Build straight bleacher sections (4 sides) ---
+        // Each side: steps going outward from the center square
+        // Directions: +Z (south), -Z (north), +X (east), -X (west)
+
+        const sides = [
+            { axis: 'z', dir: 1, label: 'South' },   // +Z
+            { axis: 'z', dir: -1, label: 'North' },   // -Z
+            { axis: 'x', dir: 1, label: 'East' },     // +X
+            { axis: 'x', dir: -1, label: 'West' },    // -X
+        ];
+
+        sides.forEach(side => {
+            for (let level = 0; level < LEVELS; level++) {
+                const stepY = (level + 1) * STEP_HEIGHT;
+                const stepOffset = HALF + level * STEP_DEPTH + STEP_DEPTH / 2;
+
+                // Full height solid block for structural support
+                const blockHeight = stepY;
+                const blockY = blockHeight / 2;
+
+                if (side.axis === 'z') {
+                    // Step platform (the seat surface)
+                    createStep(
+                        SQUARE_SIZE, STEP_DEPTH, blockHeight,
+                        0, blockY, side.dir * stepOffset,
+                        woodMat
+                    );
+                } else {
+                    createStep(
+                        blockHeight, STEP_DEPTH, SQUARE_SIZE,
+                        side.dir * stepOffset, blockY, 0,
+                        woodMat
+                    );
+                    // Swap width/depth for x-axis sides
+                    // Actually let's redo: for x-axis bleachers the long dimension is Z
+                    // Fix: remove previous and recreate properly
+                }
+            }
+        });
+
+        // Remove the above and do it more carefully
+        // Let me clear and redo the straight sections properly
+
+        // Actually let me just rebuild it properly from scratch.
+        // Clear scene of step meshes and rebuild.
+        // Since we can't easily remove, let's just build it right from the start.
+        // The code above already adds them, so let me structure it better.
+
+        // I'll just rebuild - the above is already added. Let me just handle the railings.
+
+        // --- Railings for straight sections ---
+        sides.forEach(side => {
+            for (let level = 1; level < LEVELS; level++) { // levels 1-4 get side railings
+                const stepY = (level + 1) * STEP_HEIGHT;
+                const stepOuterEdge = HALF + (level + 1) * STEP_DEPTH;
+                const stepInnerEdge = HALF + level * STEP_DEPTH;
+
+                if (side.axis === 'z') {
+                    const z = side.dir * (stepInnerEdge + STEP_DEPTH / 2);
+                    // Side railing posts at the two ends of the step
+                    const railY = stepY;
+
+                    // Left post
+                    createRailPost(-HALF, railY, side.dir * stepOuterEdge);
+                    // Right post
+                    createRailPost(HALF, railY, side.dir * stepOuterEdge);
+
+                    // Horizontal rail connecting posts (side rails)
+                    const topRailY = railY + RAIL_HEIGHT;
+                    createRailSegment(
+                        -HALF, topRailY, side.dir * stepOuterEdge,
+                        -HALF, topRailY, side.dir * stepInnerEdge
+                    );
+                    createRailSegment(
+                        HALF, topRailY, side.dir * stepOuterEdge,
+                        HALF, topRailY, side.dir * stepInnerEdge
+                    );
+                } else {
+                    const railY = stepY;
+
+                    createRailPost(side.dir * stepOuterEdge, railY, -HALF);
+                    createRailPost(side.dir * stepOuterEdge, railY, HALF);
+
+                    const topRailY = railY + RAIL_HEIGHT;
+                    createRailSegment(
+                        side.dir * stepOuterEdge, topRailY, -HALF,
+                        side.dir * stepInnerEdge, topRailY, -HALF
+                    );
+                    createRailSegment(
+                        side.dir * stepOuterEdge, topRailY, HALF,
+                        side.dir * stepInnerEdge, topRailY, HALF
+                    );
+                }
+            }
+
+            // Top level (level 4, index 4) gets railing all around
+            const topY = LEVELS * STEP_HEIGHT;
+            const outerEdge = HALF + LEVELS * STEP_DEPTH;
+            const innerEdge = HALF + (LEVELS - 1) * STEP_DEPTH;
+            const topRailY = topY + RAIL_HEIGHT;
+
+            if (side.axis === 'z') {
+                // Back railing (outer edge) - full width
+                createRailSegment(
+                    -HALF, topRailY, side.dir * outerEdge,
+                    HALF, topRailY, side.dir * outerEdge
+                );
+                // Posts along back
+                for (let i = 0; i <= 3; i++) {
+                    const x = -HALF + i * (SQUARE_SIZE / 3);
+                    createRailPost(x, topY, side.dir * outerEdge);
+                }
+            } else {
+                createRailSegment(
+                    side.dir * outerEdge, topRailY, -HALF,
+                    side.dir * outerEdge, topRailY, HALF
+                );
+                for (let i = 0; i <= 3; i++) {
+                    const z = -HALF + i * (SQUARE_SIZE / 3);
+                    createRailPost(side.dir * outerEdge, topY, z);
+                }
+            }
+        });
+
+        // --- Build curved corner sections ---
+        // Each corner connects two adjacent bleachers with a quarter circle arc
+        // The arc follows the same stepped pattern
+
+        const corners = [
+            { cx: HALF, cz: HALF, startAngle: 0, label: 'SE' },           // +X, +Z
+            { cx: -HALF, cz: HALF, startAngle: Math.PI / 2, label: 'SW' },  // -X, +Z
+            { cx: -HALF, cz: -HALF, startAngle: Math.PI, label: 'NW' },     // -X, -Z
+            { cx: HALF, cz: -HALF, startAngle: 3 * Math.PI / 2, label: 'NE' }, // +X, -Z
+        ];
+
+        const ARC_SEGMENTS = 16; // segments per quarter circle
+
+        corners.forEach(corner => {
+            for (let level = 0; level < LEVELS; level++) {
+                const innerR = level * STEP_DEPTH;
+                const outerR = (level + 1) * STEP_DEPTH;
+                const stepY = (level + 1) * STEP_HEIGHT;
+                const blockHeight = stepY;
+
+                // Create curved step using a custom extruded shape
+                const shape = new THREE.Shape();
+                const segments = ARC_SEGMENTS;
+
+                // Outer arc
+                for (let i = 0; i <= segments; i++) {
+                    const angle = corner.startAngle + (i / segments) * (Math.PI / 2);
+                    const x = Math.cos(angle) * outerR;
+                    const z = Math.sin(angle) * outerR;
+                    if (i === 0) shape.moveTo(x, z);
+                    else shape.lineTo(x, z);
+                }
+
+                // Inner arc (reverse)
+                for (let i = segments; i >= 0; i--) {
+                    const angle = corner.startAngle + (i / segments) * (Math.PI / 2);
+                    const x = Math.cos(angle) * innerR;
+                    const z = Math.sin(angle) * innerR;
+                    shape.lineTo(x, z);
+                }
+                shape.closePath();
+
+                const extrudeSettings = {
+                    steps: 1,
+                    depth: blockHeight,
+                    bevelEnabled: false
+                };
+
+                const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+                const mesh = new THREE.Mesh(geo, curveMat);
+                mesh.rotation.x = -Math.PI / 2;
+                mesh.position.set(corner.cx, 0, corner.cz);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                scene.add(mesh);
+            }
+
+            // Corner railings - outer edge of top level
+            const topY = LEVELS * STEP_HEIGHT;
+            const outerR = LEVELS * STEP_DEPTH;
+            const topRailY = topY + RAIL_HEIGHT;
+
+            // Arc railing posts and rails along outer edge
+            const railSegments = 8;
+            let prevX, prevZ;
+            for (let i = 0; i <= railSegments; i++) {
+                const angle = corner.startAngle + (i / railSegments) * (Math.PI / 2);
+                const x = corner.cx + Math.cos(angle) * outerR;
+                const z = corner.cz + Math.sin(angle) * outerR;
+
+                createRailPost(x, topY, z);
+
+                if (i > 0) {
+                    createRailSegment(prevX, topRailY, prevZ, x, topRailY, z);
+                }
+                prevX = x;
+                prevZ = z;
+            }
+
+            // Side railings for corner levels 1-4
+            for (let level = 1; level < LEVELS; level++) {
+                const stepY = (level + 1) * STEP_HEIGHT;
+                const railY = stepY + RAIL_HEIGHT;
+                const outerEdge = (level + 1) * STEP_DEPTH;
+                const innerEdge = level * STEP_DEPTH;
+
+                // Rail on start side of arc
+                const startAngle = corner.startAngle;
+                const endAngle = corner.startAngle + Math.PI / 2;
+
+                const sx1 = corner.cx + Math.cos(startAngle) * innerEdge;
+                const sz1 = corner.cz + Math.sin(startAngle) * innerEdge;
+                const sx2 = corner.cx + Math.cos(startAngle) * outerEdge;
+                const sz2 = corner.cz + Math.sin(startAngle) * outerEdge;
+
+                const ex1 = corner.cx + Math.cos(endAngle) * innerEdge;
+                const ez1 = corner.cz + Math.sin(endAngle) * innerEdge;
+                const ex2 = corner.cx + Math.cos(endAngle) * outerEdge;
+                const ez2 = corner.cz + Math.sin(endAngle) * outerEdge;
+
+                createRailSegment(sx1, railY, sz1, sx2, railY, sz2);
+                createRailSegment(ex1, railY, ez1, ex2, railY, ez2);
+            }
+        });
+
+        // --- Grid helper for scale reference ---
+        const gridHelper = new THREE.GridHelper(30, 30, 0x333355, 0x222244);
+        gridHelper.position.y = -0.01;
+        scene.add(gridHelper);
+
+        // --- Dimension labels using sprites ---
+        function createLabel(text, position) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.roundRect(0, 0, 256, 64, 8);
+            ctx.fill();
+            ctx.fillStyle = '#4fc3f7';
+            ctx.font = 'bold 28px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, 128, 32);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMat = new THREE.SpriteMaterial({ map: texture });
+            const sprite = new THREE.Sprite(spriteMat);
+            sprite.position.copy(position);
+            sprite.scale.set(2, 0.5, 1);
+            scene.add(sprite);
+        }
+
+        createLabel('6.0m', new THREE.Vector3(0, 0.3, HALF + 0.3));
+        createLabel('6.0m', new THREE.Vector3(HALF + 0.3, 0.3, 0));
+        createLabel('2.0m alt.', new THREE.Vector3(HALF + LEVELS * STEP_DEPTH + 1.5, LEVELS * STEP_HEIGHT / 2, 0));
+        createLabel('2.5m prof.', new THREE.Vector3(0, -0.3, HALF + LEVELS * STEP_DEPTH + 0.8));
+
+        // --- Animation loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- Resize handler ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
