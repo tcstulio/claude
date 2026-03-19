@@ -229,6 +229,76 @@
         .kw .views-needed { color: #ff8c33; }
         .kw .progress-bar { background: linear-gradient(90deg, #ff6a00, #ff8c33); }
 
+        /* Spotify */
+        .sp .platform-icon { background: #1db954; color: #fff; }
+        .sp .views-needed { color: #1db954; }
+        .sp .progress-bar { background: linear-gradient(90deg, #1db954, #1ed760); }
+
+        /* Apple Music */
+        .am .platform-icon { background: linear-gradient(45deg, #fc3c44, #a833b9); color: #fff; }
+        .am .views-needed { color: #fc3c44; }
+        .am .progress-bar { background: linear-gradient(90deg, #fc3c44, #a833b9); }
+
+        /* Deezer */
+        .dz .platform-icon { background: #a238ff; color: #fff; }
+        .dz .views-needed { color: #a238ff; }
+        .dz .progress-bar { background: linear-gradient(90deg, #a238ff, #c77dff); }
+
+        .music-section {
+            background: rgba(29, 185, 84, 0.06);
+            border: 1px solid rgba(29, 185, 84, 0.2);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        .music-section h2 {
+            font-size: 1.1rem;
+            color: #1db954;
+            margin-bottom: 6px;
+        }
+        .music-section .music-subtitle {
+            font-size: 0.85rem;
+            color: #888;
+            margin-bottom: 16px;
+        }
+        .music-insight {
+            background: rgba(29, 185, 84, 0.08);
+            border: 1px solid rgba(29, 185, 84, 0.15);
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 16px;
+            font-size: 0.85rem;
+            line-height: 1.7;
+            color: #ccc;
+        }
+        .music-insight strong { color: #1db954; }
+        .music-insight h3 { color: #1db954; font-size: 0.95rem; margin-bottom: 10px; }
+        .revenue-source {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .revenue-source:last-child { border-bottom: none; }
+        .revenue-name { font-weight: 500; }
+        .revenue-pct {
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+        .revenue-bar {
+            height: 8px;
+            border-radius: 4px;
+            margin-top: 4px;
+            background: rgba(255,255,255,0.05);
+            overflow: hidden;
+        }
+        .revenue-fill {
+            height: 100%;
+            border-radius: 4px;
+            background: linear-gradient(90deg, #1db954, #4fc3f7);
+        }
+
         @media (max-width: 600px) {
             h1 { font-size: 1.5rem; }
             .platforms-grid { grid-template-columns: 1fr; }
@@ -265,12 +335,72 @@
                         <option value="gaming">Games</option>
                         <option value="education">Educacao</option>
                         <option value="fitness">Fitness / Saude</option>
+                        <option value="music">Musica</option>
                     </select>
                 </div>
             </div>
         </div>
 
         <div class="platforms-grid" id="platforms"></div>
+
+        <div class="music-section" id="musicSection" style="display:none">
+            <h2>Plataformas de Streaming Musical</h2>
+            <p class="music-subtitle">Onde musicos realmente monetizam: streams, Content ID e sincronizacao</p>
+            <div class="platforms-grid" id="musicPlatforms"></div>
+
+            <div class="music-insight">
+                <h3>Onde Musicos Realmente Ganham Dinheiro</h3>
+                <div class="revenue-source">
+                    <div>
+                        <div class="revenue-name">Shows e Eventos ao Vivo</div>
+                        <div style="font-size:0.75rem;color:#888">Caches, bilheteria, merch no local</div>
+                    </div>
+                    <div class="revenue-pct" style="color:#1db954">~40%</div>
+                </div>
+                <div class="revenue-bar"><div class="revenue-fill" style="width:40%"></div></div>
+
+                <div class="revenue-source">
+                    <div>
+                        <div class="revenue-name">Sync / Licenciamento</div>
+                        <div style="font-size:0.75rem;color:#888">Novelas, filmes, publicidade, games</div>
+                    </div>
+                    <div class="revenue-pct" style="color:#4fc3f7">~20%</div>
+                </div>
+                <div class="revenue-bar"><div class="revenue-fill" style="width:20%"></div></div>
+
+                <div class="revenue-source">
+                    <div>
+                        <div class="revenue-name">YouTube Content ID</div>
+                        <div style="font-size:0.75rem;color:#888">Outros usam sua musica em videos deles</div>
+                    </div>
+                    <div class="revenue-pct" style="color:#ff4444">~15%</div>
+                </div>
+                <div class="revenue-bar"><div class="revenue-fill" style="width:15%"></div></div>
+
+                <div class="revenue-source">
+                    <div>
+                        <div class="revenue-name">Streaming (Spotify, Apple, etc)</div>
+                        <div style="font-size:0.75rem;color:#888">Pagamento por stream</div>
+                    </div>
+                    <div class="revenue-pct" style="color:#a238ff">~15%</div>
+                </div>
+                <div class="revenue-bar"><div class="revenue-fill" style="width:15%"></div></div>
+
+                <div class="revenue-source">
+                    <div>
+                        <div class="revenue-name">Merch, Patrocinios e Parcerias</div>
+                        <div style="font-size:0.75rem;color:#888">Marcas, produtos proprios</div>
+                    </div>
+                    <div class="revenue-pct" style="color:#ff8c33">~10%</div>
+                </div>
+                <div class="revenue-bar"><div class="revenue-fill" style="width:10%"></div></div>
+
+                <br>
+                <strong>Resumo:</strong> Streaming puro paga muito pouco. Um artista precisa de ~166.000 streams no Spotify para ganhar R$3.000.
+                O verdadeiro poder de um videoclipe e gerar <strong>visibilidade</strong> que alimenta shows, sync deals e Content ID.
+                Um clipe viral que coloca a musica em 10.000 videos no YouTube via Content ID pode gerar mais receita do que 1M de views no proprio clipe.
+            </div>
+        </div>
 
         <div class="summary-section">
             <h2>Resumo Comparativo</h2>
@@ -311,7 +441,7 @@
                 baseCPM: { BRL: 6.0, USD: 4.0 },
                 nicheMultiplier: {
                     general: 1.0, tech: 1.6, finance: 2.5, beauty: 1.3,
-                    gaming: 0.8, education: 1.4, fitness: 1.2
+                    gaming: 0.8, education: 1.4, fitness: 1.2, music: 0.5
                 },
                 monetizationRate: 0.55, // ~55% of views are monetized
                 note: '55% das views monetizadas'
@@ -324,7 +454,7 @@
                 baseCPM: { BRL: 1.5, USD: 1.0 },
                 nicheMultiplier: {
                     general: 1.0, tech: 1.2, finance: 1.5, beauty: 1.8,
-                    gaming: 0.6, education: 1.0, fitness: 1.4
+                    gaming: 0.6, education: 1.0, fitness: 1.4, music: 0.7
                 },
                 monetizationRate: 0.30,
                 note: 'Programa de bonus, ~30% monetizado'
@@ -337,7 +467,7 @@
                 baseCPM: { BRL: 0.8, USD: 0.5 },
                 nicheMultiplier: {
                     general: 1.0, tech: 1.3, finance: 1.5, beauty: 1.2,
-                    gaming: 0.9, education: 1.1, fitness: 1.1
+                    gaming: 0.9, education: 1.1, fitness: 1.1, music: 1.2
                 },
                 monetizationRate: 0.40,
                 note: 'Fundo de Criadores, ~40% elegivel'
@@ -349,7 +479,7 @@
                 baseCPM: { BRL: 4.0, USD: 3.0 },
                 nicheMultiplier: {
                     general: 1.0, tech: 1.3, finance: 2.0, beauty: 1.1,
-                    gaming: 0.7, education: 1.2, fitness: 1.1
+                    gaming: 0.7, education: 1.2, fitness: 1.1, music: 0.6
                 },
                 monetizationRate: 0.45,
                 note: 'In-stream ads, ~45% monetizado'
@@ -361,7 +491,7 @@
                 baseCPM: { BRL: 1.0, USD: 0.7 },
                 nicheMultiplier: {
                     general: 1.0, tech: 1.5, finance: 2.0, beauty: 0.8,
-                    gaming: 0.7, education: 1.2, fitness: 0.9
+                    gaming: 0.7, education: 1.2, fitness: 0.9, music: 0.5
                 },
                 monetizationRate: 0.25,
                 note: 'Ads revenue share, ~25% monetizado'
@@ -373,10 +503,54 @@
                 baseCPM: { BRL: 0.5, USD: 0.3 },
                 nicheMultiplier: {
                     general: 1.0, tech: 1.0, finance: 1.2, beauty: 1.1,
-                    gaming: 0.8, education: 0.9, fitness: 1.0
+                    gaming: 0.8, education: 0.9, fitness: 1.0, music: 0.6
                 },
                 monetizationRate: 0.35,
                 note: 'Programa de recompensas, ~35% elegivel'
+            }
+        };
+
+        // Music-specific platforms (only shown when niche = music)
+        const musicPlatformData = {
+            youtube_contentid: {
+                name: 'YouTube Content ID',
+                icon: '©',
+                class: 'yt',
+                description: 'Quando outros usam sua musica em videos deles',
+                revenuePerStream: { BRL: 0.007, USD: 0.005 },
+                note: 'Revenue share de videos que usam sua musica'
+            },
+            spotify: {
+                name: 'Spotify',
+                icon: '●',
+                class: 'sp',
+                description: 'Streams na plataforma',
+                revenuePerStream: { BRL: 0.018, USD: 0.004 },
+                note: '~R$0,015-0,020 por stream no BR'
+            },
+            apple_music: {
+                name: 'Apple Music',
+                icon: '♫',
+                class: 'am',
+                description: 'Streams na plataforma',
+                revenuePerStream: { BRL: 0.04, USD: 0.008 },
+                note: '~R$0,035-0,045 por stream no BR'
+            },
+            deezer: {
+                name: 'Deezer',
+                icon: '♬',
+                class: 'dz',
+                description: 'Streams na plataforma',
+                revenuePerStream: { BRL: 0.02, USD: 0.004 },
+                note: '~R$0,015-0,025 por stream no BR'
+            },
+            tiktok_sound: {
+                name: 'TikTok (som usado)',
+                icon: '♪',
+                class: 'tt',
+                description: 'Quando sua musica vira trend/som',
+                revenuePerStream: { BRL: 0.0003, USD: 0.00006 },
+                note: 'Paga quase nada, mas gera streams em outras plataformas'
             }
         };
 
@@ -402,11 +576,55 @@
             const currency = document.getElementById('currency').value;
             const niche = document.getElementById('niche').value;
             const currencySymbol = currency === 'BRL' ? 'R$' : '$';
+            const isMusic = niche === 'music';
 
             const platformsContainer = document.getElementById('platforms');
             const summaryBody = document.getElementById('summaryBody');
+            const musicSection = document.getElementById('musicSection');
+            const musicPlatforms = document.getElementById('musicPlatforms');
             platformsContainer.innerHTML = '';
             summaryBody.innerHTML = '';
+            musicPlatforms.innerHTML = '';
+
+            musicSection.style.display = isMusic ? 'block' : 'none';
+
+            // Render music streaming platforms
+            if (isMusic) {
+                Object.entries(musicPlatformData).forEach(([key, platform]) => {
+                    const revenuePerStream = platform.revenuePerStream[currency];
+                    const streamsNeeded = cost > 0 ? Math.ceil(cost / revenuePerStream) : 0;
+                    const difficulty = getDifficulty(streamsNeeded);
+
+                    const card = document.createElement('div');
+                    card.className = `platform-card ${platform.class}`;
+                    card.innerHTML = `
+                        <div class="platform-header">
+                            <div class="platform-icon">${platform.icon}</div>
+                            <div>
+                                <div class="platform-name">${platform.name}</div>
+                                <div class="platform-cpm">${currencySymbol} ${revenuePerStream.toFixed(4)}/stream | ${platform.note}</div>
+                            </div>
+                        </div>
+                        <div class="views-needed">${formatNumber(streamsNeeded)}</div>
+                        <div class="views-label">${formatNumberFull(streamsNeeded)} streams para equilibrar ${currencySymbol} ${formatNumberFull(cost)}</div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar" style="width: ${difficulty.percent}%"></div>
+                        </div>
+                        <div class="difficulty-label ${difficulty.class}">${difficulty.label}</div>
+                    `;
+                    musicPlatforms.appendChild(card);
+
+                    // Add to summary
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td><strong>${platform.name}</strong></td>
+                        <td>${currencySymbol} ${revenuePerStream.toFixed(4)}/stream</td>
+                        <td class="highlight">${formatNumberFull(streamsNeeded)}</td>
+                        <td><span class="tag ${difficulty.class}">${difficulty.label}</span></td>
+                    `;
+                    summaryBody.appendChild(row);
+                });
+            }
 
             Object.entries(platformData).forEach(([key, platform]) => {
                 const baseCPM = platform.baseCPM[currency];
