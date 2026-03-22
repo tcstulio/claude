@@ -6,6 +6,7 @@
  */
 
 import { PetManager } from './engine/pet-manager.js';
+import { PetNetwork } from './engine/pet-network.js';
 import { createPetServer } from './api/server.js';
 
 const PORT = parseInt(process.env.PET_PORT || '3333');
@@ -15,17 +16,22 @@ console.log('  🌷 Tulipa Pet');
 console.log('  ─────────────────────────────');
 
 const manager = new PetManager();
+const network = new PetNetwork(manager);
+
 manager.start();
-createPetServer(manager, PORT);
+network.start();
+createPetServer(manager, PORT, network);
 
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n  Salvando pet...');
+  network.stop();
   manager.stop();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
+  network.stop();
   manager.stop();
   process.exit(0);
 });

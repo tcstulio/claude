@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { PetState } from './pet-state.js';
+import { AchievementTracker } from './achievements.js';
 import { detectEnvironment, collectAllSensors } from '../sensors/collector-factory.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -30,8 +31,13 @@ export class PetManager extends EventEmitter {
     this.networkPets = new Map(); // pets from other agents
     this._timers = [];
 
+    // Achievement system
+    this.achievements = new AchievementTracker();
+    this.achievements.load();
+
     console.log(`🌱 Pet "${this.pet.name}" loaded (${this.envType} agent)`);
     console.log(`   Level ${this.pet.level} | XP ${this.pet.xp} | Age ${this.pet.getAge().total}`);
+    console.log(`   🏆 ${this.achievements.getUnlocked().length} achievements unlocked`);
   }
 
   _loadOrCreate() {
@@ -65,6 +71,7 @@ export class PetManager extends EventEmitter {
       if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
       writeFileSync(PET_FILE, JSON.stringify(this.pet.toJSON(), null, 2));
       writeFileSync(HISTORY_FILE, JSON.stringify(this.history.slice(-HISTORY_MAX)));
+      this.achievements.save();
     } catch (e) {
       console.error('Failed to save pet:', e.message);
     }
@@ -98,6 +105,14 @@ export class PetManager extends EventEmitter {
             this.pet.addEvent('critical', `${need.label} está em nível crítico: ${need.value}%`);
           }
         }
+      }
+
+      // Check achievements
+      const newAchievements = this.achievements.check(this.pet, sensors, this.history);
+      for (const achievement of newAchievements) {
+        this.pet.addEvent('achievement', `🏆 Conquista desbloqueada: ${achievement.icon} ${achievement.name}`);
+        this.emit('achievement', achievement);
+        console.log(`🏆 Achievement unlocked: ${achievement.icon} ${achievement.name}`);
       }
 
       this.emit('update', snapshot);
@@ -159,6 +174,11 @@ export class PetManager extends EventEmitter {
     this.pet.xp += xpGain;
     this.pet.addEvent('interaction', message);
 
+    // Track interaction counts for achievements
+    if (action === 'pet') {
+      this.achievements.incrementCounter('pet_interactions');
+    }
+
     const snapshot = this.pet.getSnapshot();
     this.emit('update', snapshot);
     this._save();
@@ -198,5 +218,10 @@ export class PetManager extends EventEmitter {
   // Register a peer's pet state
   registerPeerPet(snapshot) {
     this.networkPets.set(snapshot.agentId, snapshot);
+    this.achievements.registerPeer(snapshot.agentId);
+  }
+
+  getAchievements() {
+    return this.achievements.getAll();
   }
 }

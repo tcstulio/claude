@@ -11,7 +11,7 @@ import { dirname, join } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export function createPetServer(petManager, port = 3333) {
+export function createPetServer(petManager, port = 3333, petNetwork = null) {
   const app = express();
   const server = createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
@@ -58,6 +58,31 @@ export function createPetServer(petManager, port = 3333) {
     }
   });
 
+  // API: List all discovered peer pets with friendship levels
+  app.get('/api/pets/network', (req, res) => {
+    if (!petNetwork) {
+      return res.json([]);
+    }
+    res.json(petNetwork.getNetworkPets());
+  });
+
+  // API: Send a gift to a peer pet
+  app.post('/api/pets/gift', async (req, res) => {
+    if (!petNetwork) {
+      return res.status(503).json({ error: 'Pet network not available' });
+    }
+    const { peerId, needKey } = req.body;
+    if (!peerId || !needKey) {
+      return res.status(400).json({ error: 'peerId and needKey are required' });
+    }
+    try {
+      const result = await petNetwork.sendGift(peerId, needKey);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // WebSocket: real-time updates
   wss.on('connection', (ws) => {
     // Send initial state
@@ -86,6 +111,16 @@ export function createPetServer(petManager, port = 3333) {
       if (client.readyState === 1) client.send(msg);
     });
   });
+
+  // Broadcast peer updates to all connected WebSocket clients
+  if (petNetwork) {
+    petNetwork.on('peer-update', (peerData) => {
+      const msg = JSON.stringify({ type: 'peer-update', data: peerData });
+      wss.clients.forEach(client => {
+        if (client.readyState === 1) client.send(msg);
+      });
+    });
+  }
 
   server.listen(port, () => {
     console.log(`🌷 Tulipa Pet dashboard: http://localhost:${port}`);
