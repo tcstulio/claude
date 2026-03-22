@@ -1,16 +1,41 @@
 const express = require('express');
+const { ProxyAgent, fetch: undiciFetch } = require('undici');
 const app = express();
 
 const GATEWAY_URL = process.env.GATEWAY_URL || 'https://agent.coolgroove.com.br';
 const PORT = process.env.PORT || 3000;
 
+// Configura proxy se disponível no ambiente
+const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
+const API_TOKEN = process.env.TULIPA_TOKEN || '';
+
+function proxyFetch(url, options = {}) {
+  return undiciFetch(url, { ...options, dispatcher });
+}
+
+// Resolve token: env var ou passthrough do header Authorization do cliente
+function resolveToken(req) {
+  if (API_TOKEN) return API_TOKEN;
+  const auth = req?.get?.('authorization') || '';
+  if (auth.startsWith('Bearer ')) return auth.slice(7);
+  return '';
+}
+
+function authHeaders(req) {
+  const h = { 'Content-Type': 'application/json' };
+  const token = resolveToken(req);
+  if (token) h['Authorization'] = `Bearer ${token}`;
+  return h;
+}
+
 app.use(express.json());
 
 // Helper: chama MCP tool no gateway
-async function callMcpTool(tool, args = {}) {
-  const res = await fetch(`${GATEWAY_URL}/mcp`, {
+async function callMcpTool(tool, args = {}, req = null) {
+  const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders(req),
     body: JSON.stringify({ tool, arguments: args }),
   });
 
@@ -25,7 +50,7 @@ async function callMcpTool(tool, args = {}) {
 // GET /api/health — proxy para health do gateway
 app.get('/api/health', async (_req, res) => {
   try {
-    const r = await fetch(`${GATEWAY_URL}/api/health`);
+    const r = await proxyFetch(`${GATEWAY_URL}/api/health`);
     res.status(r.status).json(await r.json());
   } catch (err) {
     res.status(502).json({ error: 'Gateway indisponível', detail: err.message });
@@ -40,7 +65,7 @@ app.get('/api/whatsapp/history', async (req, res) => {
     if (phone) args.phone = phone;
     if (limit) args.limit = parseInt(limit, 10);
 
-    const data = await callMcpTool('get_whatsapp_history', args);
+    const data = await callMcpTool('get_whatsapp_history', args, req);
     res.json(data);
   } catch (err) {
     res.status(502).json({ error: 'Falha ao buscar histórico', detail: err.message });
@@ -56,7 +81,7 @@ app.post('/api/whatsapp/send', async (req, res) => {
       return res.status(400).json({ error: 'Campos "phone" e "message" são obrigatórios' });
     }
 
-    const data = await callMcpTool('send_whatsapp', { phone, message });
+    const data = await callMcpTool('send_whatsapp', { phone, message }, req);
     res.json(data);
   } catch (err) {
     res.status(502).json({ error: 'Falha ao enviar mensagem', detail: err.message });
@@ -64,9 +89,9 @@ app.post('/api/whatsapp/send', async (req, res) => {
 });
 
 // GET /api/status — status do agente
-app.get('/api/status', async (_req, res) => {
+app.get('/api/status', async (req, res) => {
   try {
-    const data = await callMcpTool('get_status');
+    const data = await callMcpTool('get_status', {}, req);
     res.json(data);
   } catch (err) {
     res.status(502).json({ error: 'Falha ao buscar status', detail: err.message });
@@ -74,9 +99,9 @@ app.get('/api/status', async (_req, res) => {
 });
 
 // GET /api/peers — listar agentes conectados
-app.get('/api/peers', async (_req, res) => {
+app.get('/api/peers', async (req, res) => {
   try {
-    const data = await callMcpTool('list_peers');
+    const data = await callMcpTool('list_peers', {}, req);
     res.json(data);
   } catch (err) {
     res.status(502).json({ error: 'Falha ao listar peers', detail: err.message });
@@ -90,7 +115,7 @@ app.get('/api/logs', async (req, res) => {
     const args = {};
     if (limit) args.limit = parseInt(limit, 10);
 
-    const data = await callMcpTool('get_logs', args);
+    const data = await callMcpTool('get_logs', args, req);
     res.json(data);
   } catch (err) {
     res.status(502).json({ error: 'Falha ao buscar logs', detail: err.message });
@@ -100,7 +125,7 @@ app.get('/api/logs', async (req, res) => {
 // POST /api/mcp/:tool — proxy genérico para qualquer MCP tool
 app.post('/api/mcp/:tool', async (req, res) => {
   try {
-    const data = await callMcpTool(req.params.tool, req.body);
+    const data = await callMcpTool(req.params.tool, req.body, req);
     res.json(data);
   } catch (err) {
     res.status(502).json({ error: `Falha ao chamar tool "${req.params.tool}"`, detail: err.message });
