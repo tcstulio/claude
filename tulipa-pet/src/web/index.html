@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tulipa Pet 🌷</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #0d1117;
+            --card: #161b22;
+            --border: #30363d;
+            --text: #e6edf3;
+            --muted: #8b949e;
+            --accent: #e91e63;
+            --green: #4caf50;
+            --yellow: #ffeb3b;
+            --red: #f44336;
+        }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        header {
+            text-align: center;
+            padding: 20px 0;
+        }
+        header h1 { font-size: 1.4em; color: var(--accent); }
+        header .subtitle { color: var(--muted); font-size: 0.85em; margin-top: 4px; }
+
+        /* Pet Avatar */
+        .pet-avatar {
+            text-align: center;
+            margin: 20px 0;
+            position: relative;
+        }
+        .pet-face {
+            width: 200px;
+            height: 200px;
+            margin: 0 auto;
+            position: relative;
+        }
+        .pet-face canvas {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            border: 3px solid var(--accent);
+            background: var(--card);
+        }
+        .pet-stage {
+            font-size: 3em;
+            margin-bottom: 8px;
+        }
+        .pet-name {
+            font-size: 1.5em;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .pet-name:hover { color: var(--accent); }
+        .pet-info {
+            color: var(--muted);
+            font-size: 0.85em;
+            margin-top: 4px;
+        }
+        .pet-mood {
+            font-size: 1.2em;
+            margin-top: 8px;
+            padding: 4px 16px;
+            border-radius: 20px;
+            display: inline-block;
+        }
+
+        /* Overall Score */
+        .score-ring {
+            width: 120px;
+            height: 120px;
+            margin: 15px auto;
+            position: relative;
+        }
+        .score-ring svg { width: 100%; height: 100%; }
+        .score-ring .score-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1.8em;
+            font-weight: bold;
+        }
+
+        /* Needs Grid */
+        .needs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 12px;
+            margin: 20px 0;
+        }
+        .need-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            transition: transform 0.2s;
+        }
+        .need-card:hover { transform: translateY(-2px); }
+        .need-card.critical { border-color: var(--red); animation: pulse 2s infinite; }
+        .need-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .need-label { font-size: 0.9em; }
+        .need-value { font-weight: bold; font-size: 1.1em; }
+        .need-bar {
+            height: 8px;
+            background: var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .need-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 1s ease, background 0.5s;
+        }
+
+        /* Actions */
+        .actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            margin: 20px 0;
+        }
+        .action-btn {
+            background: var(--card);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 12px 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+        .action-btn:hover {
+            border-color: var(--accent);
+            background: #1a1a2e;
+            transform: scale(1.05);
+        }
+        .action-btn:active { transform: scale(0.95); }
+        .action-btn .action-icon { font-size: 1.3em; display: block; margin-bottom: 4px; }
+
+        /* Events Log */
+        .events {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 20px 0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .events h3 { margin-bottom: 10px; font-size: 0.95em; color: var(--muted); }
+        .event-item {
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85em;
+        }
+        .event-item:last-child { border-bottom: none; }
+        .event-time { color: var(--muted); font-size: 0.8em; }
+
+        /* Sensors Debug */
+        .sensors-debug {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 20px 0;
+            font-size: 0.8em;
+            font-family: monospace;
+        }
+        .sensors-debug summary { cursor: pointer; color: var(--muted); }
+
+        /* History Chart */
+        .history-chart {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+        .history-chart h3 { margin-bottom: 10px; font-size: 0.95em; color: var(--muted); }
+        .history-chart canvas { width: 100%; height: 150px; }
+
+        /* Connection Status */
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .status-dot.online { background: var(--green); }
+        .status-dot.offline { background: var(--red); }
+
+        /* Toast Notifications */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--card);
+            border: 1px solid var(--accent);
+            border-radius: 12px;
+            padding: 14px 20px;
+            color: var(--text);
+            font-size: 0.9em;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s;
+            z-index: 100;
+        }
+        .toast.show { transform: translateY(0); opacity: 1; }
+
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.3); }
+            50% { box-shadow: 0 0 15px 5px rgba(244, 67, 54, 0.15); }
+        }
+
+        /* Network Pets */
+        .network-pets {
+            display: flex;
+            gap: 12px;
+            overflow-x: auto;
+            padding: 10px 0;
+        }
+        .peer-pet {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 14px;
+            min-width: 150px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+        .peer-pet .peer-sprite { font-size: 2em; }
+        .peer-pet .peer-name { font-size: 0.85em; margin-top: 4px; }
+        .peer-pet .peer-mood { font-size: 0.75em; color: var(--muted); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Tulipa Pet</h1>
+            <div class="subtitle">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Conectando...</span>
+            </div>
+        </header>
+
+        <!-- Pet Avatar -->
+        <div class="pet-avatar">
+            <div class="pet-stage" id="petStage">🌱</div>
+            <div class="pet-face">
+                <canvas id="petCanvas" width="200" height="200"></canvas>
+            </div>
+            <div class="pet-name" id="petName" title="Clique para renomear">Tulipa</div>
+            <div class="pet-info" id="petInfo">Nível 1 | 0 XP | 0d 0h</div>
+            <div class="pet-mood" id="petMood">(•_•) neutro</div>
+        </div>
+
+        <!-- Score Ring -->
+        <div class="score-ring">
+            <svg viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#30363d" stroke-width="8"/>
+                <circle id="scoreCircle" cx="60" cy="60" r="52" fill="none"
+                    stroke="#e91e63" stroke-width="8" stroke-linecap="round"
+                    stroke-dasharray="326.7" stroke-dashoffset="326.7"
+                    transform="rotate(-90 60 60)"/>
+            </svg>
+            <div class="score-text" id="scoreText">--</div>
+        </div>
+
+        <!-- Needs -->
+        <div class="needs-grid" id="needsGrid"></div>
+
+        <!-- Actions -->
+        <div class="actions">
+            <button class="action-btn" onclick="interact('pet')">
+                <span class="action-icon">💕</span> Carinho
+            </button>
+            <button class="action-btn" onclick="interact('feed')">
+                <span class="action-icon">⚡</span> Alimentar
+            </button>
+            <button class="action-btn" onclick="interact('clean')">
+                <span class="action-icon">🧹</span> Limpar
+            </button>
+            <button class="action-btn" onclick="interact('heal')">
+                <span class="action-icon">❤️</span> Curar
+            </button>
+            <button class="action-btn" onclick="interact('guard')">
+                <span class="action-icon">🛡️</span> Proteger
+            </button>
+            <button class="action-btn" onclick="interact('play')">
+                <span class="action-icon">🎭</span> Brincar
+            </button>
+        </div>
+
+        <!-- Network Peers -->
+        <div id="networkSection" style="display:none">
+            <h3 style="color:var(--muted); font-size:0.9em; margin-bottom:8px">Pets na Rede</h3>
+            <div class="network-pets" id="networkPets"></div>
+        </div>
+
+        <!-- History Chart -->
+        <div class="history-chart">
+            <h3>Histórico (últimas horas)</h3>
+            <canvas id="historyCanvas" height="150"></canvas>
+        </div>
+
+        <!-- Events -->
+        <div class="events">
+            <h3>Eventos Recentes</h3>
+            <div id="eventsLog"></div>
+        </div>
+
+        <!-- Sensors Debug -->
+        <details class="sensors-debug">
+            <summary>Dados dos Sensores (debug)</summary>
+            <pre id="sensorsData">Aguardando...</pre>
+        </details>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        let ws;
+        let petState = null;
+
+        // WebSocket Connection
+        function connect() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${location.host}/ws`);
+
+            ws.onopen = () => {
+                document.getElementById('statusDot').className = 'status-dot online';
+                document.getElementById('statusText').textContent = 'Conectado';
+            };
+
+            ws.onclose = () => {
+                document.getElementById('statusDot').className = 'status-dot offline';
+                document.getElementById('statusText').textContent = 'Desconectado — reconectando...';
+                setTimeout(connect, 3000);
+            };
+
+            ws.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'state') {
+                    petState = msg.data;
+                    render(petState);
+                } else if (msg.type === 'interaction') {
+                    showToast(msg.data.message);
+                }
+            };
+        }
+
+        function interact(action) {
+            if (ws?.readyState === 1) {
+                ws.send(JSON.stringify({ action }));
+            }
+        }
+
+        // Render
+        function render(state) {
+            // Stage & Name
+            document.getElementById('petStage').textContent = state.stage.sprite;
+            document.getElementById('petName').textContent = state.name;
+            document.getElementById('petInfo').textContent =
+                `Nível ${state.level} | ${state.xp} XP | ${state.age.total} | ${state.agentType}`;
+
+            // Mood
+            const moodEl = document.getElementById('petMood');
+            moodEl.textContent = `${state.mood.face} ${state.mood.name}`;
+            moodEl.style.background = state.mood.color + '22';
+            moodEl.style.color = state.mood.color;
+
+            // Score Ring
+            const score = state.overallScore;
+            const circumference = 326.7;
+            const offset = circumference - (score / 100) * circumference;
+            const circle = document.getElementById('scoreCircle');
+            circle.style.strokeDashoffset = offset;
+            circle.style.stroke = score > 70 ? '#4caf50' : score > 40 ? '#ffeb3b' : '#f44336';
+            document.getElementById('scoreText').textContent = score;
+
+            // Needs
+            const grid = document.getElementById('needsGrid');
+            grid.innerHTML = '';
+            for (const [key, need] of Object.entries(state.needs)) {
+                const isCritical = need.value < 30;
+                const color = need.value > 70 ? '#4caf50' : need.value > 40 ? '#ffeb3b' : '#f44336';
+                grid.innerHTML += `
+                    <div class="need-card ${isCritical ? 'critical' : ''}">
+                        <div class="need-header">
+                            <span class="need-label">${need.icon} ${need.label}</span>
+                            <span class="need-value" style="color:${color}">${need.value}%</span>
+                        </div>
+                        <div class="need-bar">
+                            <div class="need-bar-fill" style="width:${need.value}%;background:${color}"></div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Events
+            const eventsLog = document.getElementById('eventsLog');
+            eventsLog.innerHTML = (state.events || []).map(e => `
+                <div class="event-item">
+                    <span class="event-time">${new Date(e.time).toLocaleTimeString('pt-BR')}</span>
+                    ${e.message}
+                </div>
+            `).join('');
+
+            // Draw face
+            drawPetFace(state);
+
+            // Fetch sensors & history
+            fetchSensors();
+            fetchHistory();
+        }
+
+        // Pet Face Canvas
+        function drawPetFace(state) {
+            const canvas = document.getElementById('petCanvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            const score = state.overallScore;
+            const mood = state.mood;
+
+            ctx.clearRect(0, 0, w, h);
+
+            // Background glow
+            const gradient = ctx.createRadialGradient(w/2, h/2, 20, w/2, h/2, 90);
+            gradient.addColorStop(0, mood.color + '33');
+            gradient.addColorStop(1, 'transparent');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, w, h);
+
+            // Eyes
+            const eyeY = h * 0.38;
+            const eyeSpacing = 28;
+            const eyeSize = score > 60 ? 10 : score > 30 ? 8 : 6;
+
+            ctx.fillStyle = mood.color;
+
+            // Left eye
+            if (score > 50) {
+                // Happy eyes (arcs)
+                ctx.beginPath();
+                ctx.arc(w/2 - eyeSpacing, eyeY, eyeSize, Math.PI, 0, false);
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = mood.color;
+                ctx.stroke();
+            } else if (score > 20) {
+                // Neutral eyes (dots)
+                ctx.beginPath();
+                ctx.arc(w/2 - eyeSpacing, eyeY, eyeSize, 0, Math.PI * 2);
+                ctx.fill();
+            } else {
+                // Sad eyes (X)
+                ctx.strokeStyle = mood.color;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(w/2 - eyeSpacing - 6, eyeY - 6);
+                ctx.lineTo(w/2 - eyeSpacing + 6, eyeY + 6);
+                ctx.moveTo(w/2 - eyeSpacing + 6, eyeY - 6);
+                ctx.lineTo(w/2 - eyeSpacing - 6, eyeY + 6);
+                ctx.stroke();
+            }
+
+            // Right eye (mirror)
+            if (score > 50) {
+                ctx.beginPath();
+                ctx.arc(w/2 + eyeSpacing, eyeY, eyeSize, Math.PI, 0, false);
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = mood.color;
+                ctx.stroke();
+            } else if (score > 20) {
+                ctx.beginPath();
+                ctx.arc(w/2 + eyeSpacing, eyeY, eyeSize, 0, Math.PI * 2);
+                ctx.fillStyle = mood.color;
+                ctx.fill();
+            } else {
+                ctx.strokeStyle = mood.color;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(w/2 + eyeSpacing - 6, eyeY - 6);
+                ctx.lineTo(w/2 + eyeSpacing + 6, eyeY + 6);
+                ctx.moveTo(w/2 + eyeSpacing + 6, eyeY - 6);
+                ctx.lineTo(w/2 + eyeSpacing - 6, eyeY + 6);
+                ctx.stroke();
+            }
+
+            // Blush (when happy)
+            if (score > 75) {
+                ctx.fillStyle = '#e91e6333';
+                ctx.beginPath();
+                ctx.ellipse(w/2 - 38, h * 0.48, 12, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(w/2 + 38, h * 0.48, 12, 8, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Mouth
+            const mouthY = h * 0.58;
+            ctx.strokeStyle = mood.color;
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            if (score > 70) {
+                // Big smile
+                ctx.arc(w/2, mouthY - 5, 25, 0.2, Math.PI - 0.2);
+            } else if (score > 50) {
+                // Small smile
+                ctx.arc(w/2, mouthY, 15, 0.3, Math.PI - 0.3);
+            } else if (score > 30) {
+                // Flat line
+                ctx.moveTo(w/2 - 15, mouthY + 5);
+                ctx.lineTo(w/2 + 15, mouthY + 5);
+            } else if (score > 15) {
+                // Frown
+                ctx.arc(w/2, mouthY + 20, 15, Math.PI + 0.3, -0.3);
+            } else {
+                // Distressed
+                ctx.arc(w/2, mouthY + 25, 20, Math.PI + 0.2, -0.2);
+                // Sweat drop
+                ctx.fillStyle = '#64b5f6';
+                ctx.beginPath();
+                ctx.ellipse(w/2 + 45, eyeY + 10, 4, 6, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.stroke();
+
+            // Breathing animation (subtle scale pulse)
+            const breathe = Math.sin(Date.now() / 1500) * 2;
+            canvas.style.transform = `scale(${1 + breathe * 0.005})`;
+        }
+
+        // Sensors debug
+        async function fetchSensors() {
+            try {
+                const res = await fetch('/api/sensors');
+                const data = await res.json();
+                document.getElementById('sensorsData').textContent = JSON.stringify(data, null, 2);
+            } catch { /* ignore */ }
+        }
+
+        // History chart
+        async function fetchHistory() {
+            try {
+                const res = await fetch('/api/pet/history');
+                const data = await res.json();
+                drawHistory(data);
+            } catch { /* ignore */ }
+        }
+
+        function drawHistory(data) {
+            const canvas = document.getElementById('historyCanvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width = canvas.offsetWidth;
+            const h = canvas.height = 150;
+
+            ctx.clearRect(0, 0, w, h);
+
+            if (data.length < 2) return;
+
+            // Draw grid
+            ctx.strokeStyle = '#30363d';
+            ctx.lineWidth = 0.5;
+            for (let y = 0; y <= 100; y += 25) {
+                const py = h - (y / 100) * h;
+                ctx.beginPath();
+                ctx.moveTo(0, py);
+                ctx.lineTo(w, py);
+                ctx.stroke();
+            }
+
+            // Draw score line
+            ctx.strokeStyle = '#e91e63';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            data.forEach((point, i) => {
+                const x = (i / (data.length - 1)) * w;
+                const y = h - (point.score / 100) * h;
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+
+            // Fill gradient below
+            ctx.lineTo(w, h);
+            ctx.lineTo(0, h);
+            ctx.closePath();
+            const grad = ctx.createLinearGradient(0, 0, 0, h);
+            grad.addColorStop(0, '#e91e6333');
+            grad.addColorStop(1, 'transparent');
+            ctx.fillStyle = grad;
+            ctx.fill();
+        }
+
+        // Toast notification
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 3000);
+        }
+
+        // Rename pet
+        document.getElementById('petName').addEventListener('click', () => {
+            const name = prompt('Novo nome para o pet:');
+            if (name) {
+                fetch('/api/pet/name', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name }),
+                });
+            }
+        });
+
+        // Breathing animation loop
+        function animationLoop() {
+            if (petState) drawPetFace(petState);
+            requestAnimationFrame(animationLoop);
+        }
+
+        // Start
+        connect();
+        animationLoop();
+    </script>
+</body>
+</html>

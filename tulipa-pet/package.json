@@ -1,0 +1,15 @@
+{
+  "name": "tulipa-pet",
+  "version": "1.0.0",
+  "description": "Virtual pet powered by real device sensors — Tulipa Network",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.16.0"
+  }
+}
