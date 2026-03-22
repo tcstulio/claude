@@ -47,6 +47,17 @@ export function createPetServer(petManager, port = 3333, petNetwork = null) {
     res.json(petManager.getAllPets());
   });
 
+  // API: List achievements
+  app.get('/api/achievements', (req, res) => {
+    const all = petManager.getAchievements();
+    const unlocked = all.filter(a => a.status === 'unlocked');
+    res.json({
+      total: all.length,
+      unlocked: unlocked.length,
+      achievements: all,
+    });
+  });
+
   // API: Rename pet
   app.post('/api/pet/name', (req, res) => {
     const { name } = req.body;
@@ -107,6 +118,14 @@ export function createPetServer(petManager, port = 3333, petNetwork = null) {
   // Broadcast state to all connected clients
   petManager.on('update', (snapshot) => {
     const msg = JSON.stringify({ type: 'state', data: snapshot });
+    wss.clients.forEach(client => {
+      if (client.readyState === 1) client.send(msg);
+    });
+  });
+
+  // Broadcast achievement unlocks to all connected clients
+  petManager.on('achievement', (achievement) => {
+    const msg = JSON.stringify({ type: 'achievement', data: achievement });
     wss.clients.forEach(client => {
       if (client.readyState === 1) client.send(msg);
     });
