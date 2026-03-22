@@ -41,7 +41,11 @@ async function callMcpTool(tool, args = {}, req = null) {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Gateway retornou ${res.status}: ${text}`);
+    const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
+    const detail = isHtml
+      ? `Gateway retornou ${res.status} (servidor MCP offline)`
+      : `Gateway retornou ${res.status}: ${text}`;
+    throw new Error(detail);
   }
 
   return res.json();
