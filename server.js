@@ -6,6 +6,7 @@ const WhatsAppTransport = require('./lib/transport/whatsapp');
 const TelegramTransport = require('./lib/transport/telegram');
 const EmailTransport = require('./lib/transport/email');
 const WebhookTransport = require('./lib/transport/webhook');
+const MessageQueue = require('./lib/queue');
 const Router = require('./lib/router');
 const MeshManager = require('./lib/mesh');
 const protocol = require('./lib/protocol');
@@ -14,21 +15,13 @@ const receiptLib = require('./lib/ledger/receipt');
 const createLocalTools = require('./lib/local-tools');
 const capabilitiesLib = require('./lib/capabilities');
 const { requireScope, resolveScopes } = require('./lib/middleware/scope-guard');
+const { tokenFederation, introspectHandler } = require('./lib/middleware/token-federation');
 const { InfraScanner } = require('./lib/infra/scanner');
 const InfraAdopter = require('./lib/infra/adopt');
 const SSHTaskRunner = require('./lib/infra/ssh-task');
 const { CanaryRunner } = require('./lib/infra/canary');
+const { NetworkRoutes } = require('./lib/infra/network-routes');
 const OrgRegistry = require('./lib/org/org-registry');
-
-// ─── Fase 9-11: SQLite, Task Engine, Identity ─────────────────────────
-const Storage = require('./lib/storage');
-const MessageQueueSQLite = require('./lib/queue-sqlite');
-const TaskEngine = require('./lib/task-engine');
-const Identity = require('./lib/identity');
-
-// ─── Fase 12: Métricas e Terminal ─────────────────────────────────────
-const Metrics = require('./lib/metrics');
-const Terminal = require('./lib/terminal');
 
 const app = express();
 
@@ -59,17 +52,31 @@ function authHeaders(req) {
   return h;
 }
 
-// Middleware de autenticação — requer Bearer token válido
+// Extrai token do header Authorization do request
+function getRequestToken(req) {
+  const auth = req?.get?.('authorization') || '';
+  if (auth.startsWith('Bearer ')) return auth.slice(7);
+  return '';
+}
+
+// Middleware de autenticação — requer Bearer token válido no request
+// Aceita: master token, peer tokens do registry, ou tokens federados via hub
 function requireAuth(req, res, next) {
-  const token = resolveToken(req);
+  const token = getRequestToken(req);
   if (!token) {
     return res.status(401).json({ error: 'Authorization required — envie header Authorization: Bearer <token>' });
   }
-  // Se API_TOKEN está configurado, o token do request deve bater
-  if (API_TOKEN && token !== API_TOKEN) {
-    return res.status(403).json({ error: 'Token inválido' });
-  }
-  next();
+
+  // Master token = sempre OK
+  if (API_TOKEN && token === API_TOKEN) return next();
+
+  // Token federado (validado pelo middleware tokenFederation)
+  if (req.grantedScopes && req.grantedScopes.length > 0) return next();
+
+  // Se não tem API_TOKEN configurado, aceita qualquer token
+  if (!API_TOKEN) return next();
+
+  return res.status(403).json({ error: 'Token inválido' });
 }
 
 app.use(express.json());
@@ -80,56 +87,8 @@ let _mcpCallId = 0;
 const MCP_MAX_RETRIES = 3;
 const MCP_RETRY_DELAYS = [2000, 4000, 8000]; // backoff exponencial
 
-function rateLimit(req, res, next) {
-  const ip = req.ip || req.connection.remoteAddress || 'unknown';
-  const now = Date.now();
-  let entry = rateLimitMap.get(ip);
-
-  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW) {
-    entry = { count: 0, windowStart: now };
-    rateLimitMap.set(ip, entry);
-  }
-
-  entry.count++;
-
-  if (entry.count > RATE_LIMIT_MAX) {
-    res.set('Retry-After', Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW - now) / 1000));
-    return res.status(429).json({ error: 'Rate limit excedido', retryAfter: Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW - now) / 1000) });
-  }
-
-  next();
-}
-
-// Limpa IPs antigos a cada 5 min
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of rateLimitMap) {
-    if (now - entry.windowStart > RATE_LIMIT_WINDOW * 2) rateLimitMap.delete(ip);
-  }
-}, 5 * 60 * 1000);
-
-// Rate limit em todas as rotas API
-app.use('/api', rateLimit);
-
-// ─── Métricas e Terminal ──────────────────────────────────────────────
-const metrics = new Metrics({
-  collectInterval: parseInt(process.env.METRICS_INTERVAL || '30000', 10),
-  historySize: parseInt(process.env.METRICS_HISTORY || '360', 10),
-});
-const terminal = new Terminal();
-
-// Middleware: contabiliza requests HTTP nas métricas
-app.use((req, res, next) => {
-  metrics.trackHttpRequest();
-  next();
-});
-
-// ─── Autenticação do Dashboard ────────────────────────────────────────
-const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || process.env.TULIPA_TOKEN || '';
-
-function requireAuth(req, res, next) {
-  // Sem token configurado = modo dev (sem auth)
-  if (!DASHBOARD_TOKEN) return next();
+async function callMcpTool(tool, args = {}, req = null) {
+  let lastError;
 
   for (let attempt = 0; attempt <= MCP_MAX_RETRIES; attempt++) {
     try {
@@ -168,45 +127,24 @@ function requireAuth(req, res, next) {
 
       return json;
 
-  if (!res.ok) {
-    const text = await res.text();
-    const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
-    const detail = isHtml
-      ? `Gateway retornou ${res.status} (servidor MCP offline)`
-      : `Gateway retornou ${res.status}: ${text}`;
-    metrics.trackMcpCall(false);
-    throw new Error(detail);
+    } catch (err) {
+      lastError = err;
+      const retryable = err.statusCode === 502 || err.statusCode === 503 || err.code === 'UND_ERR_CONNECT_TIMEOUT' || err.name === 'TimeoutError';
+
+      if (retryable && attempt < MCP_MAX_RETRIES) {
+        const delay = MCP_RETRY_DELAYS[attempt] || 8000;
+        console.log(`[mcp] ${tool} falhou (${err.message}), retry ${attempt + 1}/${MCP_MAX_RETRIES} em ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
   }
-
-  metrics.trackMcpCall(true);
-  return res.json();
+  throw lastError;
 }
-
-// ─── Inicializa Storage (SQLite) ──────────────────────────────────────
-// Storage tenta better-sqlite3 (sync) primeiro; se não tiver, cai para sql.js (async)
-let storage;
-try {
-  storage = new Storage();
-  if (storage._adapter) {
-    console.log(`[storage] Usando ${storage._engine} — pronto`);
-  } else {
-    console.log('[storage] Construtor ok mas adapter null — fallback async');
-    storage = null;
-  }
-} catch (err) {
-  console.log(`[storage] Init sync falhou (${err.message}) — fallback async`);
-  storage = null;
-}
-
-// ─── Inicializa Identity (Ed25519) ────────────────────────────────────
-const identity = new Identity({
-  nodeId: protocol.NODE_ID,
-  nodeName: protocol.NODE_NAME,
-});
 
 // ─── Inicializa Transport Layer ────────────────────────────────────────
-const queue = new MessageQueueSQLite({
-  storage,
+const queue = new MessageQueue({
   sendFn: async (item) => {
     await router.send(item.destination, item.message, { preferChannel: item.channel });
   },
@@ -267,6 +205,10 @@ const infraAdopter = new InfraAdopter({
   fetch: proxyFetch,
 });
 
+const networkRoutes = new NetworkRoutes({ fetch: proxyFetch });
+networkRoutes.detectLocalNetwork();
+console.log(`[routes] Rede local: ${JSON.stringify(networkRoutes._localInterfaces?.subnets || [])}`);
+
 infraScanner.on('discovered', (svc) => {
   console.log(`[infra] Descoberto: ${svc.type} em ${svc.endpoint} (v${svc.version})`);
 });
@@ -295,9 +237,21 @@ const orgRegistry = new OrgRegistry({
 
 // ─── Scope Resolution (popula req.grantedScopes) ─────────────────────
 app.use(resolveScopes({
-  resolveToken,
+  resolveToken: getRequestToken,
   masterToken: API_TOKEN,
   mesh,
+}));
+
+// ─── Token Federation (auth federada via hub) ────────────────────────
+// Se token não é local, pergunta ao hub se é válido (com cache)
+app.use(tokenFederation({
+  getRequestToken,
+  masterToken: API_TOKEN,
+  mesh,
+  fetch: proxyFetch,
+  hubEndpoints: process.env.HUB_ENDPOINTS
+    ? process.env.HUB_ENDPOINTS.split(',')
+    : (process.env.GATEWAY_URL ? [process.env.GATEWAY_URL] : []),
 }));
 
 // ─── Local MCP Tools ──────────────────────────────────────────────────
@@ -305,48 +259,20 @@ const localTools = createLocalTools({ ledger, mesh, protocol });
 
 mesh.on('peer-joined', (peer) => {
   console.log(`[mesh] Novo peer: ${peer.name} — canais: ${peer.channels.join(', ') || 'nenhum'}`);
-  if (storage) storage.upsertPeer(peer);
 });
 mesh.on('peer-left', (peer) => {
   console.log(`[mesh] Peer saiu: ${peer.name}`);
 });
 
-// ─── Task Engine ────────────────────────────────────────────────────
-const taskEngine = new TaskEngine({
-  storage,
-  mesh,
-  callMcpTool,
-  maxConcurrent: parseInt(process.env.TASK_MAX_CONCURRENT || '5', 10),
-});
-
-// Handler: enviar mensagem via router
-taskEngine.registerHandler('send_message', async (task) => {
-  const { destination, message, channel } = task.input;
-  return router.send(destination, message, { preferChannel: channel });
-});
-
-// Handler: chamar MCP tool
-taskEngine.registerHandler('mcp_call', async (task) => {
-  const { tool, args } = task.input;
-  return callMcpTool(tool, args);
-});
-
-// Handler genérico (echo)
-taskEngine.registerHandler('generic', async (task) => {
-  return { received: task.description, input: task.input };
-});
-
-// Log de eventos do router + tracking de métricas
+// Log de eventos do router
 router.on('sent', ({ channel, destination }) => {
   console.log(`[router] Enviado via ${channel} para ${destination}`);
-  metrics.trackMessage(true);
 });
 router.on('queued', ({ destination, id }) => {
   console.log(`[router] Enfileirado ${id} para ${destination}`);
 });
 router.on('channel-failed', ({ channel, error }) => {
   console.log(`[router] Canal ${channel} falhou: ${error}`);
-  metrics.trackMessage(false);
 });
 
 // ─── Monitor / Watchdog ────────────────────────────────────────────────
@@ -853,6 +779,101 @@ app.get('/api/network/crawl', (_req, res) => {
   res.json(mesh.crawler.cacheInfo());
 });
 
+// ─── Hub Council Routes ───────────────────────────────────────────────
+
+// Estado do hub neste nó
+app.get('/api/hub/status', (_req, res) => {
+  res.json({
+    nodeId: protocol.NODE_ID,
+    nodeName: protocol.NODE_NAME,
+    ...mesh.hubRole.toJSON(),
+  });
+});
+
+// Registry de todos os hubs conhecidos
+app.get('/api/hub/registry', (_req, res) => {
+  res.json(mesh.hubRegistry.toJSON());
+});
+
+// Council — propostas pendentes e histórico
+app.get('/api/hub/council', requireAuth, (_req, res) => {
+  res.json(mesh.hubCouncil.toJSON());
+});
+
+// Propor promoção/demoção
+app.post('/api/hub/propose', requireAuth, (req, res) => {
+  const { type, targetNodeId, reason } = req.body;
+  if (!type || !targetNodeId) {
+    return res.status(400).json({ error: 'Campos "type" e "targetNodeId" são obrigatórios' });
+  }
+  try {
+    const proposal = mesh.hubCouncil.propose(type, targetNodeId, reason || '');
+    res.json({ ok: true, proposal });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Votar em proposta
+app.post('/api/hub/vote', requireAuth, (req, res) => {
+  const { proposalId, vote, reason } = req.body;
+  if (!proposalId || !vote) {
+    return res.status(400).json({ error: 'Campos "proposalId" e "vote" são obrigatórios' });
+  }
+  try {
+    const result = mesh.hubCouncil.vote(proposalId, protocol.NODE_ID, vote, reason);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Forçar análise LLM do advisor
+app.post('/api/hub/evaluate', requireAuth, async (_req, res) => {
+  try {
+    const result = await mesh.hubAdvisor.analyze();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Último resultado da análise do advisor
+app.get('/api/hub/advisor', (_req, res) => {
+  res.json(mesh.hubAdvisor.toJSON());
+});
+
+// Receber heartbeat de outro hub (hub-to-hub, sem auth pesado)
+app.post('/api/hub/heartbeat', (req, res) => {
+  const { nodeId, metrics } = req.body;
+  if (!nodeId) return res.status(400).json({ error: 'nodeId required' });
+  const hub = mesh.hubRegistry.processHeartbeat(nodeId, metrics);
+  res.json({ ok: true, hub });
+});
+
+// Receber sync de registry (hub-to-hub)
+app.post('/api/hub/sync', (req, res) => {
+  const { hubs, epoch } = req.body;
+  if (!hubs) return res.status(400).json({ error: 'hubs required' });
+  const updated = mesh.hubRegistry.applySync(hubs, epoch);
+  res.json({ ok: true, updated, localEpoch: mesh.hubRegistry._epoch });
+});
+
+// Receber proposta/voto de eleição (hub-to-hub)
+app.post('/api/hub/election', (req, res) => {
+  try {
+    const result = mesh.hubCouncil.receiveProposal(req.body);
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Avaliação da rede (diagnóstico)
+app.get('/api/hub/network-eval', requireAuth, (_req, res) => {
+  res.json(mesh.hubCouncil.evaluateNetwork());
+});
+
 // ─── Federation Routes (Sprint 7) ─────────────────────────────────────
 
 // Busca federada por skill na rede
@@ -867,6 +888,13 @@ app.post('/api/network/query', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Token Introspection — peers perguntam se um token é válido aqui
+// Não requer auth (qualquer peer pode perguntar)
+app.post('/api/network/introspect', introspectHandler({
+  masterToken: API_TOKEN,
+  mesh,
+}));
 
 // Relay de task via este hub
 app.post('/api/network/relay', requireAuth, async (req, res) => {
@@ -972,6 +1000,42 @@ app.post('/api/local-mcp', (req, res) => {
   }
 
   res.json({ jsonrpc: '2.0', id, result });
+});
+
+// ─── Network Routes (multi-path routing) ─────────────────────────────
+
+// Ver rede local detectada e todas as rotas
+app.get('/api/routes', requireAuth, (_req, res) => {
+  res.json(networkRoutes.toJSON());
+});
+
+// Registrar rotas para um peer
+app.post('/api/routes/:nodeId', requireAuth, (req, res) => {
+  const { routes, auto } = req.body;
+  if (auto) {
+    // Auto-detectar rotas a partir de info do peer
+    const detected = networkRoutes.autoRegister(req.params.nodeId, req.body);
+    return res.json({ nodeId: req.params.nodeId, routes: detected });
+  }
+  if (!routes || !Array.isArray(routes)) {
+    return res.status(400).json({ error: 'Campo "routes" (array) é obrigatório' });
+  }
+  networkRoutes.setRoutes(req.params.nodeId, routes);
+  res.json({ ok: true, routes: networkRoutes.getRoutes(req.params.nodeId) });
+});
+
+// Resolver melhor rota para um peer
+app.get('/api/routes/:nodeId/resolve', requireAuth, async (req, res) => {
+  const force = req.query.force === 'true';
+  const result = await networkRoutes.resolve(req.params.nodeId, { force });
+  if (!result) return res.status(404).json({ error: 'Nenhuma rota funcional encontrada' });
+  res.json(result);
+});
+
+// Testar todas as rotas de um peer
+app.post('/api/routes/:nodeId/test', requireAuth, async (req, res) => {
+  const results = await networkRoutes.testAll(req.params.nodeId);
+  res.json({ nodeId: req.params.nodeId, results });
 });
 
 // ─── Infra Routes (Sprint 4) ──────────────────────────────────────────
@@ -1446,18 +1510,14 @@ app.delete('/api/services/:nodeId', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// Sweep: marca offline após 5 min, DELETA após 30 min sem heartbeat
+// Sweep: marca como offline nós sem heartbeat há mais de 5 min
 const SERVICE_STALE_MS = 5 * 60 * 1000;
-const SERVICE_DEAD_MS = 30 * 60 * 1000;
 setInterval(() => {
   const now = Date.now();
   for (const [nodeId, entry] of serviceRegistry) {
     if (nodeId === protocol.NODE_ID) continue; // não limpa a si mesmo
     const age = now - new Date(entry.lastHeartbeat).getTime();
-    if (age > SERVICE_DEAD_MS) {
-      serviceRegistry.delete(nodeId);
-      console.log(`[registry] Nó ${entry.name || nodeId} removido (inativo há ${Math.round(age / 60000)}min)`);
-    } else if (age > SERVICE_STALE_MS) {
+    if (age > SERVICE_STALE_MS) {
       entry.status = 'offline';
     }
   }
@@ -1616,177 +1676,6 @@ app.post('/api/deploy/remote', requireAuth, async (req, res) => {
   }
 });
 
-// ─── Task Engine endpoints ──────────────────────────────────────────
-
-app.get('/api/tasks', requireAuth, (_req, res) => {
-  const { status } = _req.query;
-  if (status) {
-    res.json({ tasks: storage.getTasksByStatus(status) });
-  } else {
-    res.json({ stats: storage.getTaskStats(), tasks: taskEngine.toJSON() });
-  }
-});
-
-app.post('/api/tasks', requireAuth, (req, res) => {
-  const { description, type, input, priority, assignedTo } = req.body;
-  if (!description) return res.status(400).json({ error: 'Campo "description" é obrigatório' });
-  const task = taskEngine.submit(description, { type, input, priority, assignedTo });
-  res.json({ ok: true, task });
-});
-
-app.post('/api/tasks/:id/decompose', requireAuth, (req, res) => {
-  const { subtasks } = req.body;
-  if (!subtasks || !Array.isArray(subtasks)) {
-    return res.status(400).json({ error: 'Campo "subtasks" (array) é obrigatório' });
-  }
-  const created = taskEngine.decompose(req.params.id, subtasks);
-  res.json({ ok: true, created: created.length, subtasks: created });
-});
-
-app.post('/api/tasks/:id/delegate', requireAuth, async (req, res) => {
-  try {
-    const { nodeId } = req.body;
-    const target = nodeId || taskEngine.autoAssign(req.params.id);
-    if (!target) return res.status(400).json({ error: 'Nenhum peer disponível para delegação' });
-    const result = await taskEngine.delegate(req.params.id, target);
-    res.json({ ok: true, nodeId: target, result });
-  } catch (err) {
-    res.status(502).json({ error: 'Delegação falhou', detail: err.message });
-  }
-});
-
-app.get('/api/tasks/:id', requireAuth, (req, res) => {
-  const task = storage.getTask(req.params.id);
-  if (!task) return res.status(404).json({ error: 'Task não encontrada' });
-  const subtasks = storage.getSubtasks(req.params.id);
-  res.json({ task, subtasks });
-});
-
-// ─── Identity endpoints ────────────────────────────────────────────
-
-app.get('/api/identity', (_req, res) => {
-  res.json(identity.exportPublicKey());
-});
-
-app.post('/api/identity/sign', requireAuth, (req, res) => {
-  const { data } = req.body;
-  if (!data) return res.status(400).json({ error: 'Campo "data" é obrigatório' });
-  const signature = identity.sign(data);
-  res.json({ signature, signerKey: identity.publicKey, fingerprint: identity.fingerprint });
-});
-
-app.post('/api/identity/verify', (req, res) => {
-  const { data, signature, publicKey } = req.body;
-  if (!data || !signature || !publicKey) {
-    return res.status(400).json({ error: 'Campos "data", "signature" e "publicKey" são obrigatórios' });
-  }
-  const valid = Identity.verify(data, signature, publicKey);
-  res.json({ valid });
-});
-
-// ─── Metrics endpoints ──────────────────────────────────────────────
-
-// Snapshot atual (coleta em tempo real)
-app.get('/api/metrics', async (_req, res) => {
-  try {
-    const snapshot = await metrics.collect();
-    res.json(snapshot);
-  } catch (err) {
-    res.status(500).json({ error: 'Falha ao coletar métricas', detail: err.message });
-  }
-});
-
-// Resumo com médias, picos e contadores
-app.get('/api/metrics/summary', (_req, res) => {
-  const summary = metrics.summary();
-  if (!summary) return res.json({ message: 'Ainda sem dados coletados', counters: metrics._tokens });
-  res.json(summary);
-});
-
-// Histórico de snapshots
-app.get('/api/metrics/history', (req, res) => {
-  const limit = req.query.limit ? parseInt(req.query.limit, 10) : 60;
-  res.json({ history: metrics.history(limit), total: metrics._history.length });
-});
-
-// Linha compacta para log/dashboard
-app.get('/api/metrics/compact', (_req, res) => {
-  res.json({ status: metrics.compact() });
-});
-
-// ─── Terminal (tmux) endpoints ──────────────────────────────────────
-
-// Snapshot completo de todos os painéis tmux
-app.get('/api/terminal/snapshot', async (req, res) => {
-  try {
-    const scrollback = req.query.scrollback ? parseInt(req.query.scrollback, 10) : 0;
-    const captureContent = req.query.content !== 'false';
-    const snap = await terminal.snapshot({ captureContent, scrollback });
-    res.json(snap);
-  } catch (err) {
-    res.status(500).json({ error: 'Falha ao capturar terminal', detail: err.message });
-  }
-});
-
-// Listar sessões tmux
-app.get('/api/terminal/sessions', async (_req, res) => {
-  const sessions = await terminal.listSessions();
-  res.json({ available: await terminal.isAvailable(), sessions });
-});
-
-// Listar painéis com comando atual (pane_current_command)
-app.get('/api/terminal/panes', async (_req, res) => {
-  const panes = await terminal.listPanes();
-  res.json({ available: await terminal.isAvailable(), panes });
-});
-
-// Capturar conteúdo de um painel específico
-app.get('/api/terminal/capture/:paneId', async (req, res) => {
-  try {
-    const scrollback = req.query.scrollback ? parseInt(req.query.scrollback, 10) : 0;
-    const result = await terminal.capturePane(req.params.paneId, { scrollback });
-    res.json(result || { error: 'tmux não disponível' });
-  } catch (err) {
-    res.status(500).json({ error: 'Falha ao capturar painel', detail: err.message });
-  }
-});
-
-// Comando atual de um painel
-app.get('/api/terminal/command/:paneId', async (req, res) => {
-  const result = await terminal.getCurrentCommand(req.params.paneId);
-  res.json(result || { error: 'tmux não disponível' });
-});
-
-// Histórico de snapshots (só sumários)
-app.get('/api/terminal/history', (req, res) => {
-  const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
-  res.json({ history: terminal.history(limit) });
-});
-
-// ─── Storage / Search endpoints ──────────────────────────────────────
-
-app.get('/api/storage/stats', (_req, res) => {
-  res.json(storage.stats);
-});
-
-app.get('/api/messages/search', requireAuth, (req, res) => {
-  const { q, limit } = req.query;
-  if (!q) return res.status(400).json({ error: 'Query param "q" é obrigatório' });
-  const results = storage.searchMessages(q, limit ? parseInt(limit, 10) : 50);
-  res.json({ results, count: results.length });
-});
-
-// ─── Audit Log endpoint ────────────────────────────────────────────
-
-app.get('/api/audit', requireAuth, (req, res) => {
-  const { event, source, since, limit } = req.query;
-  const logs = storage.getAuditLog({
-    event, source, since,
-    limit: limit ? parseInt(limit, 10) : 100,
-  });
-  res.json({ logs, count: logs.length });
-});
-
 // ─── Startup ───────────────────────────────────────────────────────────
 
 let monitorTimer = null;
@@ -1877,43 +1766,6 @@ app.listen(PORT, () => {
   console.log('  POST /api/deploy/remote       — deploy remoto via run_command');
   console.log('  GET  /api/deploy/log          — log de deploys');
 
-  // Task Engine
-  console.log('\n  Tasks:');
-  console.log('  GET  /api/tasks               — listar tarefas');
-  console.log('  POST /api/tasks               — criar tarefa');
-  console.log('  GET  /api/tasks/:id           — detalhe da tarefa');
-  console.log('  POST /api/tasks/:id/decompose — decompor em subtarefas');
-  console.log('  POST /api/tasks/:id/delegate  — delegar para peer');
-
-  // Identity
-  console.log('\n  Identity:');
-  console.log('  GET  /api/identity            — chave pública + fingerprint');
-  console.log('  POST /api/identity/sign       — assinar dados');
-  console.log('  POST /api/identity/verify     — verificar assinatura');
-  console.log(`  Fingerprint: ${identity.fingerprint}`);
-
-  // Metrics
-  console.log('\n  Metrics:');
-  console.log('  GET  /api/metrics             — snapshot de recursos (CPU, mem, GPU)');
-  console.log('  GET  /api/metrics/summary     — resumo com médias e picos');
-  console.log('  GET  /api/metrics/history     — histórico de snapshots');
-  console.log('  GET  /api/metrics/compact     — linha compacta para dashboard');
-
-  // Terminal (tmux)
-  console.log('\n  Terminal:');
-  console.log('  GET  /api/terminal/snapshot   — snapshot completo dos painéis tmux');
-  console.log('  GET  /api/terminal/sessions   — listar sessões tmux');
-  console.log('  GET  /api/terminal/panes      — painéis com pane_current_command');
-  console.log('  GET  /api/terminal/capture/:id — capturar conteúdo de um painel');
-  console.log('  GET  /api/terminal/command/:id — comando atual de um painel');
-  console.log('  GET  /api/terminal/history    — histórico de snapshots');
-
-  // Storage
-  console.log('\n  Storage:');
-  console.log('  GET  /api/storage/stats       — estatísticas do banco');
-  console.log('  GET  /api/messages/search     — buscar mensagens');
-  console.log('  GET  /api/audit               — log de auditoria');
-
   // Registra este nó no service registry
   registerSelf();
 
@@ -1922,28 +1774,6 @@ app.listen(PORT, () => {
     console.error(`[mesh] Falha ao iniciar: ${err.message}`);
   });
 
-  // Inicia task engine
-  taskEngine.start();
-
   startMonitor();
-  queue.start(15000); // 15s (antes era 5s — desnecessariamente agressivo)
-  metrics.start();
-  terminal.isAvailable().then(ok => {
-    console.log(`[terminal] tmux: ${ok ? 'disponível' : 'não detectado'}`);
-  });
-
-  // Log audit de startup
-  if (storage && storage._adapter) {
-    storage.log('system.startup', protocol.NODE_ID, null, {
-      version: '6.0',
-      transports: [...router._transports.keys()],
-      fingerprint: identity.fingerprint,
-    });
-  }
-  });
-}
-
-startServer().catch(err => {
-  console.error(`[startup] Falha ao iniciar: ${err.message}`);
-  process.exit(1);
+  queue.start(5000);
 });
