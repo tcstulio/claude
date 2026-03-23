@@ -190,8 +190,7 @@ const mesh = new MeshManager({
 
 mesh.on('peer-joined', (peer) => {
   console.log(`[mesh] Novo peer: ${peer.name} — canais: ${peer.channels.join(', ') || 'nenhum'}`);
-  // Persiste peer no SQLite
-  storage.upsertPeer(peer);
+  if (storage) storage.upsertPeer(peer);
 });
 mesh.on('peer-left', (peer) => {
   console.log(`[mesh] Peer saiu: ${peer.name}`);
@@ -996,6 +995,10 @@ async function startServer() {
   // Se storage não foi inicializado sync (sem better-sqlite3), init async via sql.js
   if (!storage) {
     storage = await Storage.create();
+    // Injeta storage nos componentes que foram criados antes
+    queue.setStorage(storage);
+    taskEngine._storage = storage;
+    console.log(`[storage] Inicializado async via sql.js`);
   }
 
   app.listen(PORT, () => {
