@@ -68,7 +68,7 @@ O servidor inclui um sistema de monitoramento automático que verifica o gateway
 
 - OFFLINE — gateway ou MCP inacessível
 - Lenta — resposta acima do threshold
-- Recuperação — voltou ao normal
+- Recuperacao — voltou ao normal
 
 ## Regras
 
