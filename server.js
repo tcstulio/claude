@@ -52,10 +52,10 @@ function authHeaders(req) {
 app.use(express.json());
 app.use(express.static('public'));
 
-// ─── Helper: chama MCP tool no gateway (com retry para 502/503) ──────
-let _mcpCallId = 0;
-const MCP_MAX_RETRIES = 3;
-const MCP_RETRY_DELAYS = [2000, 4000, 8000]; // backoff exponencial
+// ─── Rate Limiting ────────────────────────────────────────────────────
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 min
+const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '60', 10); // 60 req/min
+const rateLimitMap = new Map();
 
 function rateLimit(req, res, next) {
   const ip = req.ip || req.connection.remoteAddress || 'unknown';
@@ -108,6 +108,24 @@ function requireAuth(req, res, next) {
   // Sem token configurado = modo dev (sem auth)
   if (!DASHBOARD_TOKEN) return next();
 
+  const auth = req.get('authorization') || '';
+  const queryToken = req.query.token;
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : queryToken;
+
+  if (token === DASHBOARD_TOKEN) return next();
+
+  res.status(401).json({ error: 'Token inválido ou ausente', hint: 'Envie Authorization: Bearer <token>' });
+}
+
+// Rotas públicas (sem auth): health, monitor, services GET, dashboard HTML
+// Rotas protegidas: tudo que modifica estado (send, deploy, mcp, etc)
+
+// ─── Helper: chama MCP tool no gateway (com retry para 502/503) ──────
+let _mcpCallId = 0;
+const MCP_MAX_RETRIES = 3;
+const MCP_RETRY_DELAYS = [2000, 4000, 8000]; // backoff exponencial
+
+async function callMcpTool(tool, args = {}, req = null) {
   for (let attempt = 0; attempt <= MCP_MAX_RETRIES; attempt++) {
     try {
       const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
@@ -140,23 +158,26 @@ function requireAuth(req, res, next) {
         if (json.error) {
           throw new Error(`MCP error ${json.error.code}: ${json.error.message}`);
         }
+        metrics.trackMcpCall(true);
         return json.result;
       }
 
+      metrics.trackMcpCall(true);
       return json;
 
-  if (!res.ok) {
-    const text = await res.text();
-    const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
-    const detail = isHtml
-      ? `Gateway retornou ${res.status} (servidor MCP offline)`
-      : `Gateway retornou ${res.status}: ${text}`;
-    metrics.trackMcpCall(false);
-    throw new Error(detail);
+    } catch (err) {
+      // Retry em 502/503 (gateway temporariamente fora)
+      const retryable = err.statusCode === 502 || err.statusCode === 503;
+      if (retryable && attempt < MCP_MAX_RETRIES) {
+        const delay = MCP_RETRY_DELAYS[attempt] || 8000;
+        console.log(`[mcp] Retry ${attempt + 1}/${MCP_MAX_RETRIES} para ${tool} em ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      metrics.trackMcpCall(false);
+      throw err;
+    }
   }
-
-  metrics.trackMcpCall(true);
-  return res.json();
 }
 
 // ─── Inicializa Storage (SQLite) ──────────────────────────────────────
