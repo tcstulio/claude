@@ -170,6 +170,22 @@
     </div>
   </div>
 
+  <!-- Services -->
+  <div class="card">
+    <h2><span class="dot gray" id="services-dot"></span> Serviços da Rede</h2>
+    <div id="services-list"></div>
+    <div id="services-stats" style="margin-top:8px"></div>
+  </div>
+
+  <!-- Deploy -->
+  <div class="card">
+    <h2>Deploy</h2>
+    <div id="deploy-log-area" class="log-area" style="max-height:150px;margin-bottom:8px"></div>
+    <div class="actions">
+      <button class="btn primary" onclick="triggerDeploy()">Deploy Manual</button>
+    </div>
+  </div>
+
   <!-- Send Message -->
   <div class="card">
     <h2>Enviar Mensagem</h2>
@@ -201,12 +217,36 @@
 <div class="refresh-info">
   Auto-refresh: <span id="refresh-countdown">10</span>s
   | <button class="btn" onclick="refresh()" style="display:inline;padding:2px 8px">Atualizar agora</button>
+  | <button class="btn" onclick="setToken()" style="display:inline;padding:2px 8px" id="auth-btn">Autenticar</button>
+  <span id="auth-status" style="margin-left:6px;font-size:0.7rem"></span>
 </div>
 
 <script>
 const BASE = window.location.origin;
 const logs = [];
 let countdown = 10;
+let authToken = localStorage.getItem('tulipa_token') || '';
+
+function setToken() {
+  const t = prompt('Token de acesso (Bearer token):');
+  if (t !== null) {
+    authToken = t.trim();
+    if (authToken) {
+      localStorage.setItem('tulipa_token', authToken);
+      document.getElementById('auth-status').textContent = 'autenticado';
+      document.getElementById('auth-status').style.color = 'var(--green)';
+      log('Token configurado');
+    } else {
+      localStorage.removeItem('tulipa_token');
+      document.getElementById('auth-status').textContent = '';
+    }
+  }
+}
+
+if (authToken) {
+  document.getElementById('auth-status').textContent = 'autenticado';
+  document.getElementById('auth-status').style.color = 'var(--green)';
+}
 
 function log(msg) {
   const time = new Date().toLocaleTimeString('pt-BR');
@@ -232,6 +272,9 @@ let _connectionOk = true;
 
 async function api(path, opts) {
   try {
+    if (authToken) {
+      opts.headers = { ...opts.headers, 'Authorization': `Bearer ${authToken}` };
+    }
     const res = await fetch(BASE + path, opts);
     const contentType = res.headers.get('content-type') || '';
 
@@ -354,6 +397,50 @@ async function loadWebhooks() {
   `).join('') || '<span style="color:var(--muted);font-size:0.85rem">Nenhum endpoint</span>';
 }
 
+async function loadServices() {
+  const data = await api('/api/services');
+  if (!data) return;
+  const dot = document.getElementById('services-dot');
+  const online = data.services.filter(s => s.status === 'online').length;
+  dot.className = `dot ${online > 0 ? 'green' : 'gray'}`;
+
+  const el = document.getElementById('services-list');
+  el.innerHTML = data.services.map(s => `
+    <div class="peer-item">
+      <span class="dot ${dotColor(s.status)}"></span>
+      <span class="peer-name">${s.name}</span>
+      <span style="color:var(--muted);font-size:0.75rem">${s.nodeName}</span>
+      <span style="color:var(--purple);font-size:0.75rem">${s.type || ''}</span>
+    </div>
+  `).join('') || '<div style="color:var(--muted);font-size:0.85rem;padding:8px">Nenhum serviço registrado</div>';
+
+  document.getElementById('services-stats').innerHTML = `
+    <div class="stat-row"><span class="stat-label">Nós</span><span class="stat-value">${data.nodes}</span></div>
+    <div class="stat-row"><span class="stat-label">Serviços Online</span><span class="stat-value green">${online}</span></div>
+  `;
+}
+
+async function loadDeployLog() {
+  const data = await api('/api/deploy/log');
+  if (!data) return;
+  const el = document.getElementById('deploy-log-area');
+  el.innerHTML = (data.log || []).slice(0, 10).map(e => `
+    <div class="log-line"><span class="log-time">${new Date(e.timestamp).toLocaleTimeString('pt-BR')}</span> [${e.type}] ${e.message}</div>
+  `).join('') || '<div style="color:var(--muted)">Nenhum deploy registrado</div>';
+}
+
+async function triggerDeploy() {
+  if (!confirm('Iniciar deploy manual?')) return;
+  log('Deploy manual iniciado...');
+  const data = await api('/api/deploy/trigger', { method: 'POST' });
+  if (data?.ok) {
+    log('Deploy iniciado com sucesso');
+  } else {
+    log('Falha ao iniciar deploy');
+  }
+  setTimeout(loadDeployLog, 3000);
+}
+
 async function loadNodeInfo() {
   const data = await api('/api/mesh');
   if (data) {
@@ -370,6 +457,8 @@ async function refresh() {
     loadQueue(),
     loadMesh(),
     loadWebhooks(),
+    loadServices(),
+    loadDeployLog(),
   ]);
 }
 

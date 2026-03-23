@@ -329,7 +329,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 // WhatsApp — agora via transport layer
-app.get('/api/whatsapp/history', async (req, res) => {
+app.get('/api/whatsapp/history', requireAuth, async (req, res) => {
   try {
     const { phone, limit } = req.query;
     const result = await whatsapp.receive(phone, { limit: limit ? parseInt(limit, 10) : undefined });
@@ -339,7 +339,7 @@ app.get('/api/whatsapp/history', async (req, res) => {
   }
 });
 
-app.post('/api/whatsapp/send', async (req, res) => {
+app.post('/api/whatsapp/send', requireAuth, async (req, res) => {
   try {
     const { phone, message } = req.body;
     if (!phone || !message) {
@@ -372,7 +372,7 @@ app.get('/api/peers', async (req, res) => {
   }
 });
 
-app.get('/api/logs', async (req, res) => {
+app.get('/api/logs', requireAuth, async (req, res) => {
   try {
     const { limit } = req.query;
     const args = {};
@@ -403,7 +403,7 @@ app.get('/api/transport/health', async (_req, res) => {
 });
 
 // Enviar mensagem via protocolo padronizado
-app.post('/api/send', async (req, res) => {
+app.post('/api/send', requireAuth, async (req, res) => {
   try {
     const { destination, message, type, payload, channel } = req.body;
     if (!destination) {
@@ -429,7 +429,7 @@ app.post('/api/send', async (req, res) => {
 
 // ─── Telegram endpoints ────────────────────────────────────────────────
 
-app.post('/api/telegram/send', async (req, res) => {
+app.post('/api/telegram/send', requireAuth, async (req, res) => {
   try {
     const { chatId, message } = req.body;
     if (!message) {
@@ -458,7 +458,7 @@ app.get('/api/telegram/updates', async (req, res) => {
 
 // ─── Email endpoints ──────────────────────────────────────────────────
 
-app.post('/api/email/send', async (req, res) => {
+app.post('/api/email/send', requireAuth, async (req, res) => {
   try {
     const { to, subject, body, message } = req.body;
     if (!to) return res.status(400).json({ error: 'Campo "to" é obrigatório' });
@@ -492,7 +492,7 @@ app.get('/api/email/drafts', async (_req, res) => {
 
 // ─── Webhook endpoints ────────────────────────────────────────────────
 
-app.post('/api/webhook/send', async (req, res) => {
+app.post('/api/webhook/send', requireAuth, async (req, res) => {
   try {
     const { endpoint, url, message } = req.body;
     if (!message) return res.status(400).json({ error: 'Campo "message" é obrigatório' });
@@ -506,7 +506,7 @@ app.post('/api/webhook/send', async (req, res) => {
 });
 
 // Registrar endpoint em runtime
-app.post('/api/webhook/endpoints', (req, res) => {
+app.post('/api/webhook/endpoints', requireAuth, (req, res) => {
   try {
     const { name, url, headers, format, method } = req.body;
     if (!name || !url) return res.status(400).json({ error: 'Campos "name" e "url" são obrigatórios' });
@@ -525,7 +525,7 @@ app.get('/api/webhook/endpoints', (_req, res) => {
   res.json({ endpoints: webhook.listEndpoints() });
 });
 
-app.delete('/api/webhook/endpoints/:name', (req, res) => {
+app.delete('/api/webhook/endpoints/:name', requireAuth, (req, res) => {
   webhook.removeEndpoint(req.params.name);
   res.json({ ok: true, endpoints: webhook.listEndpoints() });
 });
@@ -556,7 +556,7 @@ app.get('/api/mesh/peers', (_req, res) => {
 });
 
 // Força discovery agora
-app.post('/api/mesh/discover', async (_req, res) => {
+app.post('/api/mesh/discover', requireAuth, async (_req, res) => {
   try {
     const peers = await mesh.discover();
     res.json({ ok: true, found: peers.length, registry: mesh.registry.toJSON() });
@@ -566,7 +566,7 @@ app.post('/api/mesh/discover', async (_req, res) => {
 });
 
 // Ping um peer específico
-app.post('/api/mesh/ping/:nodeId', async (req, res) => {
+app.post('/api/mesh/ping/:nodeId', requireAuth, async (req, res) => {
   try {
     const start = Date.now();
     const result = await mesh.pingPeer(req.params.nodeId);
@@ -577,7 +577,7 @@ app.post('/api/mesh/ping/:nodeId', async (req, res) => {
 });
 
 // Enviar mensagem para um peer
-app.post('/api/mesh/send/:nodeId', async (req, res) => {
+app.post('/api/mesh/send/:nodeId', requireAuth, async (req, res) => {
   try {
     const { message } = req.body;
     if (!message) return res.status(400).json({ error: 'Campo "message" é obrigatório' });
@@ -606,7 +606,7 @@ app.post('/api/mesh/incoming', (req, res) => {
 });
 
 // Heartbeat manual (pinga todos os peers)
-app.post('/api/mesh/heartbeat', async (_req, res) => {
+app.post('/api/mesh/heartbeat', requireAuth, async (_req, res) => {
   try {
     const results = await mesh.heartbeatAll();
     res.json({ ok: true, results });
@@ -616,12 +616,254 @@ app.post('/api/mesh/heartbeat', async (_req, res) => {
 });
 
 // Proxy genérico MCP
-app.post('/api/mcp/:tool', async (req, res) => {
+app.post('/api/mcp/:tool', requireAuth, async (req, res) => {
   try {
     const data = await callMcpTool(req.params.tool, req.body, req);
     res.json(data);
   } catch (err) {
     res.status(502).json({ error: `Falha ao chamar tool "${req.params.tool}"`, detail: err.message });
+  }
+});
+
+// ─── Service Registry ─────────────────────────────────────────────────
+const crypto = require('crypto');
+
+const serviceRegistry = new Map();
+
+// Registra este próprio nó como serviço ao iniciar
+function registerSelf() {
+  const selfId = protocol.NODE_ID;
+  serviceRegistry.set(selfId, {
+    nodeId: selfId,
+    name: protocol.NODE_NAME,
+    services: [{
+      name: 'tulipa-api',
+      url: `http://localhost:${PORT}`,
+      type: 'api',
+      version: '4.0',
+    }],
+    registeredAt: new Date().toISOString(),
+    lastHeartbeat: new Date().toISOString(),
+    status: 'online',
+  });
+}
+
+// Listar todos os serviços da rede
+app.get('/api/services', (_req, res) => {
+  const all = [];
+  for (const [nodeId, entry] of serviceRegistry) {
+    for (const svc of entry.services) {
+      all.push({
+        ...svc,
+        nodeId,
+        nodeName: entry.name,
+        status: entry.status,
+        registeredAt: entry.registeredAt,
+        lastHeartbeat: entry.lastHeartbeat,
+      });
+    }
+  }
+  res.json({ services: all, nodes: serviceRegistry.size });
+});
+
+// Registrar serviço (outros nós chamam este endpoint para se anunciar)
+app.post('/api/services/register', (req, res) => {
+  const { nodeId, name, services } = req.body;
+  if (!nodeId || !services || !Array.isArray(services)) {
+    return res.status(400).json({ error: 'Campos "nodeId" e "services" (array) são obrigatórios' });
+  }
+  serviceRegistry.set(nodeId, {
+    nodeId,
+    name: name || nodeId,
+    services,
+    registeredAt: new Date().toISOString(),
+    lastHeartbeat: new Date().toISOString(),
+    status: 'online',
+  });
+  console.log(`[registry] Nó ${name || nodeId} registrou ${services.length} serviço(s)`);
+  res.json({ ok: true, registered: services.length });
+});
+
+// Heartbeat — nó avisa que ainda está vivo
+app.post('/api/services/heartbeat', (req, res) => {
+  const { nodeId } = req.body;
+  if (!nodeId) return res.status(400).json({ error: 'Campo "nodeId" é obrigatório' });
+  const entry = serviceRegistry.get(nodeId);
+  if (!entry) return res.status(404).json({ error: 'Nó não registrado' });
+  entry.lastHeartbeat = new Date().toISOString();
+  entry.status = 'online';
+  res.json({ ok: true });
+});
+
+// Remover nó do registry
+app.delete('/api/services/:nodeId', requireAuth, (req, res) => {
+  serviceRegistry.delete(req.params.nodeId);
+  res.json({ ok: true });
+});
+
+// Sweep: marca como offline nós sem heartbeat há mais de 5 min
+const SERVICE_STALE_MS = 5 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [nodeId, entry] of serviceRegistry) {
+    if (nodeId === protocol.NODE_ID) continue; // não limpa a si mesmo
+    const age = now - new Date(entry.lastHeartbeat).getTime();
+    if (age > SERVICE_STALE_MS) {
+      entry.status = 'offline';
+    }
+  }
+}, 60000);
+
+// ─── Deploy Webhook + Auto-update ─────────────────────────────────────
+const DEPLOY_SECRET = process.env.DEPLOY_SECRET || '';
+const DEPLOY_LOG = [];
+
+function addDeployLog(type, message, details = {}) {
+  const entry = {
+    id: crypto.randomUUID(),
+    type, // 'deploy' | 'webhook' | 'error' | 'notify'
+    message,
+    details,
+    timestamp: new Date().toISOString(),
+  };
+  DEPLOY_LOG.unshift(entry);
+  if (DEPLOY_LOG.length > 50) DEPLOY_LOG.length = 50; // mantém últimos 50
+  console.log(`[deploy] ${type}: ${message}`);
+  return entry;
+}
+
+async function notifyDeploy(message) {
+  addDeployLog('notify', message);
+  // Notifica via router (WhatsApp, Telegram, etc)
+  if (ALERT_PHONE) {
+    try {
+      await router.send(ALERT_PHONE, `[Deploy] ${message}`);
+    } catch (err) {
+      console.error(`[deploy] Falha ao notificar: ${err.message}`);
+    }
+  }
+  // Notifica peers registrados
+  for (const [nodeId, entry] of serviceRegistry) {
+    if (nodeId === protocol.NODE_ID) continue;
+    if (entry.status !== 'online') continue;
+    for (const svc of entry.services) {
+      if (svc.url && svc.type === 'api') {
+        try {
+          await proxyFetch(`${svc.url}/api/webhook/incoming/deploy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source: protocol.NODE_NAME, message, timestamp: new Date().toISOString() }),
+            signal: AbortSignal.timeout(5000),
+          });
+        } catch (_) { /* best effort */ }
+      }
+    }
+  }
+}
+
+// Verificar assinatura do GitHub webhook
+function verifyGitHubSignature(payload, signature) {
+  if (!DEPLOY_SECRET) return true; // sem secret, aceita tudo (dev mode)
+  if (!signature) return false;
+  const hmac = crypto.createHmac('sha256', DEPLOY_SECRET);
+  hmac.update(payload);
+  const expected = `sha256=${hmac.digest('hex')}`;
+  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+}
+
+// GitHub webhook → auto-deploy
+app.post('/api/deploy/webhook', express.raw({ type: '*/*' }), async (req, res) => {
+  const signature = req.headers['x-hub-signature-256'];
+  const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+
+  if (DEPLOY_SECRET && !verifyGitHubSignature(rawBody, signature)) {
+    addDeployLog('error', 'Assinatura inválida no webhook');
+    return res.status(403).json({ error: 'Assinatura inválida' });
+  }
+
+  let payload;
+  try {
+    payload = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+  } catch {
+    payload = {};
+  }
+
+  const ref = payload.ref || '';
+  const pusher = payload.pusher?.name || 'unknown';
+  const commits = payload.commits?.length || 0;
+
+  addDeployLog('webhook', `Push de ${pusher}: ${commits} commit(s) em ${ref}`);
+
+  // Executa deploy via shell
+  const { execFile } = require('child_process');
+  const deployScript = require('path').join(__dirname, 'deploy.sh');
+
+  execFile('bash', [deployScript], { timeout: 60000 }, async (err, stdout, stderr) => {
+    if (err) {
+      addDeployLog('error', `Deploy falhou: ${err.message}`, { stdout, stderr });
+      await notifyDeploy(`FALHOU — ${err.message}`);
+      return;
+    }
+    addDeployLog('deploy', `Deploy OK — ${commits} commit(s) de ${pusher}`, { stdout });
+    await notifyDeploy(`OK — ${commits} commit(s) de ${pusher} em ${ref}`);
+  });
+
+  res.json({ ok: true, message: 'Deploy iniciado' });
+});
+
+// Deploy manual (trigger via API)
+app.post('/api/deploy/trigger', requireAuth, async (req, res) => {
+  const { execFile } = require('child_process');
+  const deployScript = require('path').join(__dirname, 'deploy.sh');
+
+  addDeployLog('deploy', 'Deploy manual iniciado');
+
+  execFile('bash', [deployScript], { timeout: 60000 }, async (err, stdout, stderr) => {
+    if (err) {
+      addDeployLog('error', `Deploy manual falhou: ${err.message}`, { stdout, stderr });
+      await notifyDeploy(`Deploy manual FALHOU — ${err.message}`);
+      return;
+    }
+    addDeployLog('deploy', 'Deploy manual OK', { stdout });
+    await notifyDeploy('Deploy manual concluído com sucesso');
+  });
+
+  res.json({ ok: true, message: 'Deploy manual iniciado' });
+});
+
+// Log de deploys
+app.get('/api/deploy/log', (_req, res) => {
+  res.json({ log: DEPLOY_LOG });
+});
+
+// Deploy remoto via run_command (para deployar no Android)
+app.post('/api/deploy/remote', requireAuth, async (req, res) => {
+  try {
+    const { target, commands } = req.body;
+    if (!commands || !Array.isArray(commands)) {
+      return res.status(400).json({ error: 'Campo "commands" (array de strings) é obrigatório' });
+    }
+
+    const results = [];
+    for (const cmd of commands) {
+      try {
+        const result = await callMcpTool('run_command', { command: cmd }, req);
+        results.push({ command: cmd, ok: true, result });
+        addDeployLog('deploy', `Comando remoto OK: ${cmd}`);
+      } catch (err) {
+        results.push({ command: cmd, ok: false, error: err.message });
+        addDeployLog('error', `Comando remoto falhou: ${cmd} — ${err.message}`);
+      }
+    }
+
+    const allOk = results.every(r => r.ok);
+    if (allOk) {
+      await notifyDeploy(`Deploy remoto${target ? ` em ${target}` : ''} — ${commands.length} comando(s) executados`);
+    }
+
+    res.json({ ok: allOk, results });
+  } catch (err) {
+    res.status(502).json({ error: 'Deploy remoto falhou', detail: err.message });
   }
 });
 
@@ -702,6 +944,20 @@ app.listen(PORT, () => {
   console.log('  POST /api/mesh/send/:nodeId   — enviar para peer');
   console.log('  POST /api/mesh/incoming       — receber de peer (P2P)');
   console.log('  POST /api/mesh/heartbeat      — pingar todos');
+
+  // Service Registry + Deploy
+  console.log('\n  Services:');
+  console.log('  GET  /api/services            — listar serviços da rede');
+  console.log('  POST /api/services/register   — registrar nó/serviço');
+  console.log('  POST /api/services/heartbeat  — heartbeat de nó');
+  console.log('\n  Deploy:');
+  console.log('  POST /api/deploy/webhook      — GitHub webhook auto-deploy');
+  console.log('  POST /api/deploy/trigger      — deploy manual');
+  console.log('  POST /api/deploy/remote       — deploy remoto via run_command');
+  console.log('  GET  /api/deploy/log          — log de deploys');
+
+  // Registra este nó no service registry
+  registerSelf();
 
   // Inicia mesh (discovery + heartbeat)
   mesh.start().catch(err => {
