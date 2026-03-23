@@ -1,5 +1,12 @@
 const express = require('express');
 const { ProxyAgent, fetch: undiciFetch } = require('undici');
+
+// ─── Transport Layer ───────────────────────────────────────────────────
+const WhatsAppTransport = require('./lib/transport/whatsapp');
+const MessageQueue = require('./lib/queue');
+const Router = require('./lib/router');
+const protocol = require('./lib/protocol');
+
 const app = express();
 
 const GATEWAY_URL = process.env.GATEWAY_URL || 'https://agent.coolgroove.com.br';
@@ -31,6 +38,53 @@ function authHeaders(req) {
 
 app.use(express.json());
 
+// ─── Helper: chama MCP tool no gateway ─────────────────────────────────
+async function callMcpTool(tool, args = {}, req = null) {
+  const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
+    method: 'POST',
+    headers: authHeaders(req),
+    body: JSON.stringify({ tool, arguments: args }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
+    const detail = isHtml
+      ? `Gateway retornou ${res.status} (servidor MCP offline)`
+      : `Gateway retornou ${res.status}: ${text}`;
+    throw new Error(detail);
+  }
+
+  return res.json();
+}
+
+// ─── Inicializa Transport Layer ────────────────────────────────────────
+const queue = new MessageQueue({
+  sendFn: async (item) => {
+    await router.send(item.destination, item.message, { preferChannel: item.channel });
+  },
+});
+
+const whatsapp = new WhatsAppTransport({
+  callMcpTool,
+  groups: process.env.WHATSAPP_GROUPS ? process.env.WHATSAPP_GROUPS.split(',') : [],
+  priority: 1,
+});
+
+const router = new Router({ queue });
+router.register(whatsapp);
+
+// Log de eventos do router
+router.on('sent', ({ channel, destination }) => {
+  console.log(`[router] Enviado via ${channel} para ${destination}`);
+});
+router.on('queued', ({ destination, id }) => {
+  console.log(`[router] Enfileirado ${id} para ${destination}`);
+});
+router.on('channel-failed', ({ channel, error }) => {
+  console.log(`[router] Canal ${channel} falhou: ${error}`);
+});
+
 // ─── Monitor / Watchdog ────────────────────────────────────────────────
 const MONITOR_INTERVAL = parseInt(process.env.MONITOR_INTERVAL || '120000', 10); // 2 min
 const ALERT_PHONE     = process.env.ALERT_PHONE || '';  // ex: 5511999999999
@@ -44,7 +98,7 @@ const monitorState = {
   errorMessage: null,
   responseTime: null,
   consecutiveFailures: 0,
-  alertSent: false,         // evita spam de alertas
+  alertSent: false,
 };
 
 async function sendAlert(message) {
@@ -52,11 +106,14 @@ async function sendAlert(message) {
     console.log(`[monitor] Alerta (sem ALERT_PHONE): ${message}`);
     return;
   }
-  try {
-    await callMcpTool('send_whatsapp', { phone: ALERT_PHONE, message });
-    console.log(`[monitor] Alerta enviado para ${ALERT_PHONE}`);
-  } catch (err) {
-    console.error(`[monitor] Falha ao enviar alerta: ${err.message}`);
+  // Usa o router — tenta todos os canais disponíveis
+  const result = await router.send(ALERT_PHONE, message);
+  if (result.ok) {
+    console.log(`[monitor] Alerta enviado via ${result.channel}`);
+  } else if (result.queued) {
+    console.log(`[monitor] Alerta enfileirado (${result.id})`);
+  } else {
+    console.error(`[monitor] Falha ao enviar alerta: ${JSON.stringify(result.errors)}`);
   }
 }
 
@@ -71,7 +128,7 @@ async function runHealthCheck() {
     });
 
     if (!healthRes.ok) throw new Error(`Health retornou ${healthRes.status}`);
-    const healthData = await healthRes.json();
+    await healthRes.json();
 
     // 2. Testa o MCP (é o que costuma cair com 502)
     const mcpRes = await proxyFetch(`${GATEWAY_URL}/mcp`, {
@@ -98,7 +155,7 @@ async function runHealthCheck() {
 
       if (!monitorState.alertSent && monitorState.consecutiveFailures >= 2) {
         monitorState.alertSent = true;
-        await sendAlert(`⚠️ Tulipa lenta — resposta em ${elapsed}ms (limite: ${SLOW_THRESHOLD}ms)`);
+        await sendAlert(`Tulipa lenta — resposta em ${elapsed}ms (limite: ${SLOW_THRESHOLD}ms)`);
       }
       return;
     }
@@ -113,7 +170,7 @@ async function runHealthCheck() {
     // Notifica recuperação
     if (wasDown && monitorState.alertSent) {
       monitorState.alertSent = false;
-      await sendAlert(`✅ Tulipa voltou ao normal — resposta em ${elapsed}ms`);
+      await sendAlert(`Tulipa voltou ao normal — resposta em ${elapsed}ms`);
     }
 
   } catch (err) {
@@ -129,12 +186,14 @@ async function runHealthCheck() {
     // Alerta após 2 falhas consecutivas (evita falso positivo)
     if (!monitorState.alertSent && monitorState.consecutiveFailures >= 2) {
       monitorState.alertSent = true;
-      await sendAlert(`🔴 Tulipa OFFLINE — ${err.message} (${monitorState.consecutiveFailures} falhas consecutivas)`);
+      await sendAlert(`Tulipa OFFLINE — ${err.message} (${monitorState.consecutiveFailures} falhas consecutivas)`);
     }
   }
 }
 
-// Endpoint para consultar estado do monitor
+// ─── Endpoints ─────────────────────────────────────────────────────────
+
+// Monitor
 app.get('/api/monitor', (_req, res) => {
   res.json({
     monitor: monitorState,
@@ -146,42 +205,7 @@ app.get('/api/monitor', (_req, res) => {
   });
 });
 
-// Inicia o watchdog
-let monitorTimer = null;
-function startMonitor() {
-  if (!MONITOR_INTERVAL || MONITOR_INTERVAL < 10000) return;
-  console.log(`[monitor] Watchdog ativo — check a cada ${MONITOR_INTERVAL / 1000}s`);
-  if (ALERT_PHONE) console.log(`[monitor] Alertas WhatsApp para ***${ALERT_PHONE.slice(-4)}`);
-  else console.log('[monitor] ALERT_PHONE não configurado — alertas somente no console');
-
-  // Primeiro check após 10s (dá tempo do servidor subir)
-  setTimeout(() => {
-    runHealthCheck();
-    monitorTimer = setInterval(runHealthCheck, MONITOR_INTERVAL);
-  }, 10000);
-}
-
-// Helper: chama MCP tool no gateway
-async function callMcpTool(tool, args = {}, req = null) {
-  const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
-    method: 'POST',
-    headers: authHeaders(req),
-    body: JSON.stringify({ tool, arguments: args }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
-    const detail = isHtml
-      ? `Gateway retornou ${res.status} (servidor MCP offline)`
-      : `Gateway retornou ${res.status}: ${text}`;
-    throw new Error(detail);
-  }
-
-  return res.json();
-}
-
-// GET /api/health — proxy para health do gateway
+// Health proxy
 app.get('/api/health', async (_req, res) => {
   try {
     const r = await proxyFetch(`${GATEWAY_URL}/api/health`);
@@ -191,38 +215,32 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
-// GET /api/whatsapp/history — histórico de conversas
+// WhatsApp — agora via transport layer
 app.get('/api/whatsapp/history', async (req, res) => {
   try {
     const { phone, limit } = req.query;
-    const args = {};
-    if (phone) args.phone = phone;
-    if (limit) args.limit = parseInt(limit, 10);
-
-    const data = await callMcpTool('get_whatsapp_history', args, req);
-    res.json(data);
+    const result = await whatsapp.receive(phone, { limit: limit ? parseInt(limit, 10) : undefined });
+    res.json(result);
   } catch (err) {
     res.status(502).json({ error: 'Falha ao buscar histórico', detail: err.message });
   }
 });
 
-// POST /api/whatsapp/send — enviar mensagem WhatsApp
 app.post('/api/whatsapp/send', async (req, res) => {
   try {
     const { phone, message } = req.body;
-
     if (!phone || !message) {
       return res.status(400).json({ error: 'Campos "phone" e "message" são obrigatórios' });
     }
-
-    const data = await callMcpTool('send_whatsapp', { phone, message }, req);
-    res.json(data);
+    // Usa router para fallback automático
+    const result = await router.send(phone, message);
+    res.json(result);
   } catch (err) {
     res.status(502).json({ error: 'Falha ao enviar mensagem', detail: err.message });
   }
 });
 
-// GET /api/status — status do agente
+// Status, peers, logs — via callMcpTool direto
 app.get('/api/status', async (req, res) => {
   try {
     const data = await callMcpTool('get_status', {}, req);
@@ -232,7 +250,6 @@ app.get('/api/status', async (req, res) => {
   }
 });
 
-// GET /api/peers — listar agentes conectados
 app.get('/api/peers', async (req, res) => {
   try {
     const data = await callMcpTool('list_peers', {}, req);
@@ -242,13 +259,11 @@ app.get('/api/peers', async (req, res) => {
   }
 });
 
-// GET /api/logs — logs do sistema
 app.get('/api/logs', async (req, res) => {
   try {
     const { limit } = req.query;
     const args = {};
     if (limit) args.limit = parseInt(limit, 10);
-
     const data = await callMcpTool('get_logs', args, req);
     res.json(data);
   } catch (err) {
@@ -256,7 +271,50 @@ app.get('/api/logs', async (req, res) => {
   }
 });
 
-// POST /api/mcp/:tool — proxy genérico para qualquer MCP tool
+// ─── Transport Layer endpoints ─────────────────────────────────────────
+
+// Estado do router e transports
+app.get('/api/transport', (_req, res) => {
+  res.json(router.toJSON());
+});
+
+// Estado da fila
+app.get('/api/queue', (_req, res) => {
+  res.json(queue.toJSON());
+});
+
+// Health check de todos os canais
+app.get('/api/transport/health', async (_req, res) => {
+  const results = await router.healthCheckAll();
+  res.json(results);
+});
+
+// Enviar mensagem via protocolo padronizado
+app.post('/api/send', async (req, res) => {
+  try {
+    const { destination, message, type, payload, channel } = req.body;
+    if (!destination) {
+      return res.status(400).json({ error: 'Campo "destination" é obrigatório' });
+    }
+
+    // Se enviou type/payload, cria mensagem no protocolo
+    let msg;
+    if (type) {
+      msg = protocol.createMessage(type, payload || {}, null, { channel });
+    } else if (message) {
+      msg = message;
+    } else {
+      return res.status(400).json({ error: 'Envie "message" ou "type"+"payload"' });
+    }
+
+    const result = await router.send(destination, msg, { preferChannel: channel });
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: 'Falha ao enviar', detail: err.message });
+  }
+});
+
+// Proxy genérico MCP
 app.post('/api/mcp/:tool', async (req, res) => {
   try {
     const data = await callMcpTool(req.params.tool, req.body, req);
@@ -266,18 +324,40 @@ app.post('/api/mcp/:tool', async (req, res) => {
   }
 });
 
+// ─── Startup ───────────────────────────────────────────────────────────
+
+let monitorTimer = null;
+function startMonitor() {
+  if (!MONITOR_INTERVAL || MONITOR_INTERVAL < 10000) return;
+  console.log(`[monitor] Watchdog ativo — check a cada ${MONITOR_INTERVAL / 1000}s`);
+  if (ALERT_PHONE) console.log(`[monitor] Alertas para ***${ALERT_PHONE.slice(-4)}`);
+  else console.log('[monitor] ALERT_PHONE não configurado — alertas somente no console');
+
+  setTimeout(() => {
+    runHealthCheck();
+    monitorTimer = setInterval(runHealthCheck, MONITOR_INTERVAL);
+  }, 10000);
+}
+
 app.listen(PORT, () => {
-  console.log(`Tulipa API rodando em http://localhost:${PORT}`);
+  console.log(`\nTulipa API v2.0 — Transport Layer`);
   console.log(`Gateway: ${GATEWAY_URL}`);
-  console.log('\nEndpoints disponíveis:');
+  console.log(`Node: ${protocol.NODE_ID} (${protocol.NODE_NAME})`);
+  console.log(`\nTransports: ${[...router._transports.keys()].join(', ')}`);
+  console.log(`\nEndpoints:`);
   console.log('  GET  /api/health');
   console.log('  GET  /api/status');
   console.log('  GET  /api/monitor');
-  console.log('  GET  /api/whatsapp/history?phone=5511...&limit=50');
-  console.log('  POST /api/whatsapp/send  { phone, message }');
+  console.log('  GET  /api/transport          — estado dos canais');
+  console.log('  GET  /api/transport/health   — health check canais');
+  console.log('  GET  /api/queue              — fila de mensagens');
+  console.log('  POST /api/send               — enviar via protocolo');
+  console.log('  GET  /api/whatsapp/history');
+  console.log('  POST /api/whatsapp/send');
   console.log('  GET  /api/peers');
-  console.log('  GET  /api/logs?limit=100');
-  console.log('  POST /api/mcp/:tool  { ...arguments }');
+  console.log('  GET  /api/logs');
+  console.log('  POST /api/mcp/:tool');
 
   startMonitor();
+  queue.start(5000);
 });

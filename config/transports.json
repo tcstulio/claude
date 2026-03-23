@@ -1,0 +1,30 @@
+{
+  "transports": {
+    "whatsapp": {
+      "enabled": true,
+      "priority": 1,
+      "groups": []
+    },
+    "telegram": {
+      "enabled": false,
+      "priority": 2,
+      "botToken": "",
+      "chatId": ""
+    },
+    "instagram": {
+      "enabled": false,
+      "priority": 3
+    }
+  },
+  "queue": {
+    "persistPath": "./data/queue.json",
+    "maxRetries": 5,
+    "processInterval": 5000
+  },
+  "fallback": "queue",
+  "retryPolicy": {
+    "maxRetries": 5,
+    "backoff": "exponential",
+    "initialDelay": 2000
+  }
+}
