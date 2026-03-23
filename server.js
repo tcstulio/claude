@@ -663,6 +663,47 @@ app.post('/api/mesh/admin-token/:nodeId', requireAuth, async (req, res) => {
   }
 });
 
+// ─── Network / Trust Routes (Sprint 6) ────────────────────────────────
+
+// Lista pública de peers — sem tokens, sem auth. Para crawlers de outros nós.
+app.get('/api/network/peers/public', (_req, res) => {
+  res.json({ peers: mesh.getPublicPeerList() });
+});
+
+// Trust graph do nó
+app.get('/api/network/trust', requireAuth, (_req, res) => {
+  res.json(mesh.trust.toJSON());
+});
+
+// Ranking de delegação por skill
+app.get('/api/network/rank/:skill', requireAuth, (req, res) => {
+  const eligibleOnly = req.query.all !== 'true';
+  const ranking = mesh.queryBySkill(req.params.skill, { eligibleOnly });
+  res.json({ skill: req.params.skill, ranking });
+});
+
+// Crawl da rede (BFS)
+app.post('/api/network/crawl', requireAuth, async (_req, res) => {
+  try {
+    const result = await mesh.crawlNetwork({ force: true });
+    res.json({
+      ok: true,
+      total: result.total,
+      crawled: result.crawled,
+      hops: result.hops,
+      errors: result.errors,
+      cached: result.cached || false,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Crawler cache info
+app.get('/api/network/crawl', (_req, res) => {
+  res.json(mesh.crawler.cacheInfo());
+});
+
 // ─── Capabilities Routes (Sprint 3) ───────────────────────────────────
 
 // Capabilities deste nó (configuráveis via env ou hardcoded para v0.4.0)
