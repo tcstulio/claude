@@ -1,0 +1,14 @@
+{
+  "name": "tulipa-api",
+  "version": "1.0.0",
+  "description": "Proxy API REST para o gateway Tulipa MCP",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "undici": "^7.24.5"
+  }
+}
