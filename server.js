@@ -12,6 +12,7 @@ const MeshManager = require('./lib/mesh');
 const protocol = require('./lib/protocol');
 const Ledger = require('./lib/ledger/ledger');
 const receiptLib = require('./lib/ledger/receipt');
+const createLocalTools = require('./lib/local-tools');
 
 const app = express();
 
@@ -155,6 +156,9 @@ const mesh = new MeshManager({
   discoveryInterval: parseInt(process.env.MESH_DISCOVERY_INTERVAL || '120000', 10),
   heartbeatInterval: parseInt(process.env.MESH_HEARTBEAT_INTERVAL || '60000', 10),
 });
+
+// ─── Local MCP Tools ──────────────────────────────────────────────────
+const localTools = createLocalTools({ ledger, mesh, protocol });
 
 mesh.on('peer-joined', (peer) => {
   console.log(`[mesh] Novo peer: ${peer.name} — canais: ${peer.channels.join(', ') || 'nenhum'}`);
@@ -625,6 +629,28 @@ app.post('/api/mesh/admin-token/:nodeId', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: 'Falha ao obter admin token', detail: err.message });
   }
+});
+
+// ─── Local MCP Tools Routes ───────────────────────────────────────────
+
+// Listar tools locais disponíveis
+app.get('/api/local-tools', (req, res) => {
+  res.json({ tools: localTools.list() });
+});
+
+// Chamar tool local via JSON-RPC 2.0 (mesma interface do gateway /mcp)
+app.post('/api/local-mcp', (req, res) => {
+  const { jsonrpc, method, id, params } = req.body;
+  if (jsonrpc !== '2.0' || method !== 'tools/call') {
+    return res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
+  }
+
+  const result = localTools.handle(params?.name, params?.arguments || {});
+  if (!result) {
+    return res.json({ jsonrpc: '2.0', id, error: { code: -32602, message: `Tool '${params?.name}' não encontrada` } });
+  }
+
+  res.json({ jsonrpc: '2.0', id, result });
 });
 
 // ─── Ledger Routes ────────────────────────────────────────────────────
