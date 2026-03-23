@@ -19,6 +19,7 @@ const { InfraScanner } = require('./lib/infra/scanner');
 const InfraAdopter = require('./lib/infra/adopt');
 const SSHTaskRunner = require('./lib/infra/ssh-task');
 const { CanaryRunner } = require('./lib/infra/canary');
+const { NetworkRoutes } = require('./lib/infra/network-routes');
 const OrgRegistry = require('./lib/org/org-registry');
 
 const app = express();
@@ -194,6 +195,10 @@ const infraAdopter = new InfraAdopter({
   trust: mesh.trust,
   fetch: proxyFetch,
 });
+
+const networkRoutes = new NetworkRoutes({ fetch: proxyFetch });
+networkRoutes.detectLocalNetwork();
+console.log(`[routes] Rede local: ${JSON.stringify(networkRoutes._localInterfaces?.subnets || [])}`);
 
 infraScanner.on('discovered', (svc) => {
   console.log(`[infra] Descoberto: ${svc.type} em ${svc.endpoint} (v${svc.version})`);
@@ -872,6 +877,42 @@ app.post('/api/local-mcp', (req, res) => {
   }
 
   res.json({ jsonrpc: '2.0', id, result });
+});
+
+// ─── Network Routes (multi-path routing) ─────────────────────────────
+
+// Ver rede local detectada e todas as rotas
+app.get('/api/routes', requireAuth, (_req, res) => {
+  res.json(networkRoutes.toJSON());
+});
+
+// Registrar rotas para um peer
+app.post('/api/routes/:nodeId', requireAuth, (req, res) => {
+  const { routes, auto } = req.body;
+  if (auto) {
+    // Auto-detectar rotas a partir de info do peer
+    const detected = networkRoutes.autoRegister(req.params.nodeId, req.body);
+    return res.json({ nodeId: req.params.nodeId, routes: detected });
+  }
+  if (!routes || !Array.isArray(routes)) {
+    return res.status(400).json({ error: 'Campo "routes" (array) é obrigatório' });
+  }
+  networkRoutes.setRoutes(req.params.nodeId, routes);
+  res.json({ ok: true, routes: networkRoutes.getRoutes(req.params.nodeId) });
+});
+
+// Resolver melhor rota para um peer
+app.get('/api/routes/:nodeId/resolve', requireAuth, async (req, res) => {
+  const force = req.query.force === 'true';
+  const result = await networkRoutes.resolve(req.params.nodeId, { force });
+  if (!result) return res.status(404).json({ error: 'Nenhuma rota funcional encontrada' });
+  res.json(result);
+});
+
+// Testar todas as rotas de um peer
+app.post('/api/routes/:nodeId/test', requireAuth, async (req, res) => {
+  const results = await networkRoutes.testAll(req.params.nodeId);
+  res.json({ nodeId: req.params.nodeId, results });
 });
 
 // ─── Infra Routes (Sprint 4) ──────────────────────────────────────────
