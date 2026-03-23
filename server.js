@@ -10,6 +10,8 @@ const MessageQueue = require('./lib/queue');
 const Router = require('./lib/router');
 const MeshManager = require('./lib/mesh');
 const protocol = require('./lib/protocol');
+const Ledger = require('./lib/ledger/ledger');
+const receiptLib = require('./lib/ledger/receipt');
 
 const app = express();
 
@@ -138,11 +140,18 @@ if (telegram.configured) router.register(telegram);
 if (email.configured) router.register(email);
 if (webhook.configured) router.register(webhook);
 
+// ─── Ledger Layer ─────────────────────────────────────────────────────
+const ledger = new Ledger({
+  nodeId: protocol.NODE_ID,
+  dataDir: process.env.LEDGER_DIR || './data/ledger',
+});
+
 // ─── Mesh Layer ───────────────────────────────────────────────────────
 const mesh = new MeshManager({
   router,
   callMcpTool,
   fetch: proxyFetch,
+  ledger,
   discoveryInterval: parseInt(process.env.MESH_DISCOVERY_INTERVAL || '120000', 10),
   heartbeatInterval: parseInt(process.env.MESH_HEARTBEAT_INTERVAL || '60000', 10),
 });
@@ -616,6 +625,54 @@ app.post('/api/mesh/admin-token/:nodeId', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: 'Falha ao obter admin token', detail: err.message });
   }
+});
+
+// ─── Ledger Routes ────────────────────────────────────────────────────
+
+// Resumo do ledger (saldo, totais, por skill/peer)
+app.get('/api/ledger', (req, res) => {
+  res.json(ledger.getSummary());
+});
+
+// Saldo atual
+app.get('/api/ledger/balance', (req, res) => {
+  res.json(ledger.getBalance());
+});
+
+// Listar receipts (com filtros: ?peer=X&skill=Y&since=Z&limit=N)
+app.get('/api/ledger/receipts', (req, res) => {
+  const receipts = ledger.getReceipts({
+    peer: req.query.peer,
+    skill: req.query.skill,
+    since: req.query.since,
+    limit: req.query.limit ? parseInt(req.query.limit, 10) : undefined,
+  });
+  res.json({ count: receipts.length, receipts });
+});
+
+// Verificar um receipt (aceita receipt no body + public keys opcionais)
+app.post('/api/ledger/verify', (req, res) => {
+  const { receipt: rcpt, fromPublicKey, toPublicKey } = req.body;
+  if (!rcpt) return res.status(400).json({ error: 'Campo "receipt" é obrigatório' });
+
+  // Tenta buscar public keys do registry se não fornecidas
+  const fromKey = fromPublicKey || mesh.registry.get(rcpt.from)?.metadata?.publicKey;
+  const toKey = toPublicKey || mesh.registry.get(rcpt.to)?.metadata?.publicKey;
+
+  const result = receiptLib.verifyReceipt(rcpt, { fromPublicKey: fromKey, toPublicKey: toKey });
+  res.json(result);
+});
+
+// Saldo com um peer específico
+app.get('/api/ledger/peer/:nodeId', (req, res) => {
+  const balance = ledger.getPeerBalance(req.params.nodeId);
+  const receipts = ledger.getReceipts({ peer: req.params.nodeId });
+  res.json({
+    peerId: req.params.nodeId,
+    balance,
+    receipts: receipts.length,
+    recent: receipts.slice(-5),
+  });
 });
 
 // Registrar ou atualizar endpoint de um peer
