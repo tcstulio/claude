@@ -9,7 +9,7 @@ import { PetManager } from './engine/pet-manager.js';
 import { PetNetwork } from './engine/pet-network.js';
 import { createPetServer } from './api/server.js';
 
-const PORT = parseInt(process.env.PET_PORT || '3333');
+const PORT: number = parseInt(process.env.PET_PORT || '3333');
 
 console.log('');
 console.log('  🌷 Tulipa Pet');

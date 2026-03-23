@@ -4,8 +4,9 @@
  */
 
 import { execSync } from 'child_process';
+import type { SensorData } from '../types.js';
 
-function safeExec(cmd, fallback = null) {
+function safeExec(cmd: string, fallback: string | null = null): string | null {
   try {
     return execSync(cmd, { timeout: 5000, encoding: 'utf-8' }).trim();
   } catch {
@@ -13,8 +14,8 @@ function safeExec(cmd, fallback = null) {
   }
 }
 
-export async function collectServerSensors() {
-  const sensors = {};
+export async function collectServerSensors(): Promise<SensorData> {
+  const sensors: SensorData = {};
 
   // CPU Usage
   const stat1 = safeExec("head -1 /proc/stat");
@@ -79,7 +80,7 @@ export async function collectServerSensors() {
 
   // Process count (zombie = "fleas")
   const zombies = safeExec("ps aux | awk '$8 ~ /Z/ {count++} END {print count+0}'");
-  sensors.zombieProcesses = parseInt(zombies) || 0;
+  sensors.zombieProcesses = parseInt(zombies ?? '0') || 0;
 
   // Load average
   const loadAvg = safeExec('cat /proc/loadavg');

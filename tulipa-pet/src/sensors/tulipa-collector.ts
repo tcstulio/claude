@@ -3,10 +3,22 @@
  * Fetches data from the Tulipa agent API for social/network metrics
  */
 
-const TULIPA_ENDPOINT = process.env.TULIPA_ENDPOINT || 'https://agent.coolgroove.com.br';
-const TULIPA_TOKEN = process.env.TULIPA_TOKEN;
+import type {
+  SensorData,
+  McpResponse,
+  McpResult,
+  TulipaPeer,
+  TulipaToken,
+  TulipaTask,
+  TulipaStatus,
+  TulipaHealthResponse,
+  WhatsAppMessage,
+} from '../types.js';
 
-async function mcpCall(method, args = {}) {
+const TULIPA_ENDPOINT: string = process.env.TULIPA_ENDPOINT || 'https://agent.coolgroove.com.br';
+const TULIPA_TOKEN: string | undefined = process.env.TULIPA_TOKEN;
+
+async function mcpCall(method: string, args: Record<string, unknown> = {}): Promise<McpResult | null> {
   if (!TULIPA_TOKEN) return null;
   try {
     const res = await fetch(`${TULIPA_ENDPOINT}/mcp`, {
@@ -23,28 +35,28 @@ async function mcpCall(method, args = {}) {
       }),
       signal: AbortSignal.timeout(10000),
     });
-    const data = await res.json();
-    return data.result;
+    const data: McpResponse = await res.json();
+    return data.result ?? null;
   } catch {
     return null;
   }
 }
 
-async function apiGet(path) {
+async function apiGet(path: string): Promise<TulipaHealthResponse | null> {
   if (!TULIPA_TOKEN) return null;
   try {
     const res = await fetch(`${TULIPA_ENDPOINT}${path}`, {
       headers: { 'Authorization': `Bearer ${TULIPA_TOKEN}` },
       signal: AbortSignal.timeout(10000),
     });
-    return await res.json();
+    return (await res.json()) as TulipaHealthResponse;
   } catch {
     return null;
   }
 }
 
-export async function collectTulipaSensors() {
-  const sensors = {};
+export async function collectTulipaSensors(): Promise<SensorData> {
+  const sensors: SensorData = {};
 
   // Health check
   const health = await apiGet('/api/health');
@@ -54,7 +66,7 @@ export async function collectTulipaSensors() {
   const peers = await mcpCall('list_peers');
   if (peers?.content?.[0]?.text) {
     try {
-      const peerData = JSON.parse(peers.content[0].text);
+      const peerData: TulipaPeer[] = JSON.parse(peers.content[0].text);
       sensors.peersOnline = Array.isArray(peerData) ? peerData.filter(p => p.online).length : 0;
     } catch {
       sensors.peersOnline = 0;
@@ -65,7 +77,7 @@ export async function collectTulipaSensors() {
   const tokens = await mcpCall('list_tokens');
   if (tokens?.content?.[0]?.text) {
     try {
-      const tokenData = JSON.parse(tokens.content[0].text);
+      const tokenData: TulipaToken[] = JSON.parse(tokens.content[0].text);
       sensors.activeTokens = Array.isArray(tokenData) ? tokenData.filter(t => t.active).length : 0;
     } catch {
       sensors.activeTokens = 0;
@@ -76,7 +88,7 @@ export async function collectTulipaSensors() {
   const tasks = await mcpCall('list_tasks');
   if (tasks?.content?.[0]?.text) {
     try {
-      const taskData = JSON.parse(tasks.content[0].text);
+      const taskData: TulipaTask[] = JSON.parse(tasks.content[0].text);
       sensors.tasksCompleted = Array.isArray(taskData)
         ? taskData.filter(t => t.status === 'completed').length
         : 0;
@@ -89,7 +101,7 @@ export async function collectTulipaSensors() {
   const status = await mcpCall('get_status');
   if (status?.content?.[0]?.text) {
     try {
-      const statusData = JSON.parse(status.content[0].text);
+      const statusData: TulipaStatus = JSON.parse(status.content[0].text);
       sensors.tunnelUp = statusData.cloudflared === 'running' || statusData.tunnel === 'up';
     } catch {
       // ignore
@@ -100,9 +112,9 @@ export async function collectTulipaSensors() {
   const whatsapp = await mcpCall('get_whatsapp_history');
   if (whatsapp?.content?.[0]?.text) {
     try {
-      const messages = JSON.parse(whatsapp.content[0].text);
+      const messages: WhatsAppMessage[] = JSON.parse(whatsapp.content[0].text);
       if (Array.isArray(messages) && messages.length > 0) {
-        const lastMsg = new Date(messages[0].timestamp || messages[0].date);
+        const lastMsg = new Date(messages[0].timestamp || messages[0].date || '');
         sensors.lastInteraction = (Date.now() - lastMsg.getTime()) / 60000; // minutes
       }
     } catch {

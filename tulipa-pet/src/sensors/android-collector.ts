@@ -4,8 +4,15 @@
  */
 
 import { execSync } from 'child_process';
+import type {
+  SensorData,
+  TermuxBatteryStatus,
+  TermuxWifiInfo,
+  TermuxLocation,
+  TermuxSensorList,
+} from '../types.js';
 
-function safeExec(cmd, fallback = null) {
+function safeExec(cmd: string, fallback: string | null = null): string | null {
   try {
     return execSync(cmd, { timeout: 5000, encoding: 'utf-8' }).trim();
   } catch {
@@ -13,21 +20,21 @@ function safeExec(cmd, fallback = null) {
   }
 }
 
-function safeJSON(cmd, fallback = {}) {
+function safeJSON<T extends Record<string, unknown>>(cmd: string, fallback: T = {} as T): T {
   const raw = safeExec(cmd);
   if (!raw) return fallback;
   try {
-    return JSON.parse(raw);
+    return JSON.parse(raw) as T;
   } catch {
     return fallback;
   }
 }
 
-export async function collectAndroidSensors() {
-  const sensors = {};
+export async function collectAndroidSensors(): Promise<SensorData> {
+  const sensors: SensorData = {};
 
   // Battery (energia / temperature)
-  const battery = safeJSON('termux-battery-status');
+  const battery = safeJSON<TermuxBatteryStatus>('termux-battery-status');
   if (battery.percentage !== undefined) {
     sensors.battery = battery.percentage;
   }
@@ -67,7 +74,7 @@ export async function collectAndroidSensors() {
   }
 
   // WiFi Signal
-  const wifi = safeJSON('termux-wifi-connectioninfo');
+  const wifi = safeJSON<TermuxWifiInfo>('termux-wifi-connectioninfo');
   if (wifi.rssi !== undefined) {
     // RSSI typically -30 (excellent) to -90 (terrible), map to 0-100
     sensors.wifiSignal = Math.max(0, Math.min(100, (wifi.rssi + 90) * (100 / 60)));
@@ -75,11 +82,11 @@ export async function collectAndroidSensors() {
 
   // GPS / Location (for "adventure" detection)
   // Only check occasionally as it uses battery
-  const location = safeJSON('termux-location -p network -r once 2>/dev/null');
+  const location = safeJSON<TermuxLocation>('termux-location -p network -r once 2>/dev/null');
   if (location.latitude) {
     sensors.location = {
       lat: location.latitude,
-      lon: location.longitude,
+      lon: location.longitude!,
     };
   }
 
@@ -93,7 +100,7 @@ export async function collectAndroidSensors() {
   sensors.hourOfDay = new Date().getHours();
 
   // Sensor data (accelerometer, light)
-  const sensorList = safeJSON('termux-sensor -l 2>/dev/null');
+  const sensorList = safeJSON<TermuxSensorList>('termux-sensor -l 2>/dev/null');
   if (sensorList?.sensors) {
     // Check if device has light/accelerometer sensors
     sensors.hasSensors = sensorList.sensors.map(s => s.name);

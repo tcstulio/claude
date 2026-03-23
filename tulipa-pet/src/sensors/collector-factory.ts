@@ -8,8 +8,11 @@ import { execSync } from 'child_process';
 import { collectAndroidSensors } from './android-collector.js';
 import { collectServerSensors } from './server-collector.js';
 import { collectTulipaSensors } from './tulipa-collector.js';
+import type { AgentType, SensorData } from '../types.js';
 
-export function detectEnvironment() {
+export type { AgentType, SensorData } from '../types.js';
+
+export function detectEnvironment(): AgentType {
   // Check if running on Termux (Android)
   if (process.env.TERMUX_VERSION || existsSync('/data/data/com.termux')) {
     return 'android';
@@ -34,7 +37,7 @@ export function detectEnvironment() {
   return 'desktop';
 }
 
-export async function collectAllSensors(envType) {
+export async function collectAllSensors(envType: AgentType): Promise<SensorData> {
   const localSensors = envType === 'android'
     ? await collectAndroidSensors()
     : await collectServerSensors();
