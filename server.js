@@ -588,6 +588,23 @@ app.post('/api/mesh/send/:nodeId', requireAuth, async (req, res) => {
   }
 });
 
+// Enviar prompt para um peer (o peer processa via Claude e retorna resposta)
+app.post('/api/mesh/prompt/:nodeId', requireAuth, async (req, res) => {
+  try {
+    const { prompt, text, system_prompt, model, timeout } = req.body;
+    const promptText = prompt || text;
+    if (!promptText) return res.status(400).json({ error: 'Campo "prompt" ou "text" é obrigatório' });
+    const result = await mesh.sendPrompt(req.params.nodeId, promptText, {
+      systemPrompt: system_prompt,
+      model,
+      timeoutMs: timeout || 30000,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(502).json({ error: 'Prompt falhou', detail: err.message });
+  }
+});
+
 // Registrar ou atualizar endpoint de um peer
 app.post('/api/mesh/peers/:nodeId', (req, res) => {
   try {
@@ -958,6 +975,7 @@ app.listen(PORT, () => {
   console.log('  POST /api/mesh/discover       — forçar discovery');
   console.log('  POST /api/mesh/ping/:nodeId   — ping peer');
   console.log('  POST /api/mesh/send/:nodeId   — enviar para peer');
+  console.log('  POST /api/mesh/prompt/:nodeId — enviar prompt a peer (Claude P2P)');
   console.log('  POST /api/mesh/incoming       — receber de peer (P2P)');
   console.log('  POST /api/mesh/heartbeat      — pingar todos');
 
