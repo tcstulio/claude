@@ -4,6 +4,8 @@ const { ProxyAgent, fetch: undiciFetch } = require('undici');
 // ─── Transport Layer ───────────────────────────────────────────────────
 const WhatsAppTransport = require('./lib/transport/whatsapp');
 const TelegramTransport = require('./lib/transport/telegram');
+const EmailTransport = require('./lib/transport/email');
+const WebhookTransport = require('./lib/transport/webhook');
 const MessageQueue = require('./lib/queue');
 const Router = require('./lib/router');
 const MeshManager = require('./lib/mesh');
@@ -78,9 +80,21 @@ const telegram = new TelegramTransport({
   priority: 2,
 });
 
+const email = new EmailTransport({
+  callGmailTool: async (tool, args) => callMcpTool(tool, args),
+  priority: 3,
+});
+
+const webhook = new WebhookTransport({
+  fetch: proxyFetch,
+  priority: 4,
+});
+
 const router = new Router({ queue });
 router.register(whatsapp);
 if (telegram.configured) router.register(telegram);
+if (email.configured) router.register(email);
+if (webhook.configured) router.register(webhook);
 
 // ─── Mesh Layer ───────────────────────────────────────────────────────
 const mesh = new MeshManager({
@@ -366,6 +380,89 @@ app.get('/api/telegram/updates', async (req, res) => {
   }
 });
 
+// ─── Email endpoints ──────────────────────────────────────────────────
+
+app.post('/api/email/send', async (req, res) => {
+  try {
+    const { to, subject, body, message } = req.body;
+    if (!to) return res.status(400).json({ error: 'Campo "to" é obrigatório' });
+    const msg = subject ? { subject, body: body || '' } : (message || body || '');
+    if (!msg) return res.status(400).json({ error: 'Envie "message" ou "subject"+"body"' });
+    const result = await email.send(to, msg);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: 'Falha ao enviar email', detail: err.message });
+  }
+});
+
+app.get('/api/email/search', async (req, res) => {
+  try {
+    const { query, from, limit } = req.query;
+    const messages = await email.receive(from, { query, limit: limit ? parseInt(limit, 10) : 10 });
+    res.json({ ok: true, messages });
+  } catch (err) {
+    res.status(502).json({ error: 'Falha ao buscar emails', detail: err.message });
+  }
+});
+
+app.get('/api/email/drafts', async (_req, res) => {
+  try {
+    const drafts = await email.listDrafts();
+    res.json({ ok: true, drafts });
+  } catch (err) {
+    res.status(502).json({ error: 'Falha ao listar drafts', detail: err.message });
+  }
+});
+
+// ─── Webhook endpoints ────────────────────────────────────────────────
+
+app.post('/api/webhook/send', async (req, res) => {
+  try {
+    const { endpoint, url, message } = req.body;
+    if (!message) return res.status(400).json({ error: 'Campo "message" é obrigatório' });
+    const dest = endpoint || url || webhook._defaultEndpoint;
+    if (!dest) return res.status(400).json({ error: 'Envie "endpoint" (nome) ou "url"' });
+    const result = await webhook.send(dest, message);
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: 'Falha ao enviar webhook', detail: err.message });
+  }
+});
+
+// Registrar endpoint em runtime
+app.post('/api/webhook/endpoints', (req, res) => {
+  try {
+    const { name, url, headers, format, method } = req.body;
+    if (!name || !url) return res.status(400).json({ error: 'Campos "name" e "url" são obrigatórios' });
+    webhook.addEndpoint(name, { url, headers, format, method });
+    // Se não estava no router, registra agora
+    if (!router.get('webhook') && webhook.configured) {
+      router.register(webhook);
+    }
+    res.json({ ok: true, endpoints: webhook.listEndpoints() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/webhook/endpoints', (_req, res) => {
+  res.json({ endpoints: webhook.listEndpoints() });
+});
+
+app.delete('/api/webhook/endpoints/:name', (req, res) => {
+  webhook.removeEndpoint(req.params.name);
+  res.json({ ok: true, endpoints: webhook.listEndpoints() });
+});
+
+// Receber webhook (incoming) — outros serviços postam aqui
+app.post('/api/webhook/incoming/:source', (req, res) => {
+  const source = req.params.source;
+  const payload = req.body;
+  console.log(`[webhook] Incoming de ${source}: ${JSON.stringify(payload).slice(0, 100)}`);
+  webhook.emit('incoming', { source, payload });
+  res.json({ ok: true, received: true });
+});
+
 // ─── Mesh endpoints ───────────────────────────────────────────────────
 
 // Estado do mesh
@@ -451,7 +548,7 @@ function startMonitor() {
 }
 
 app.listen(PORT, () => {
-  console.log(`\nTulipa API v3.0 — Transport + Mesh`);
+  console.log(`\nTulipa API v4.0 — Multi-Channel + Mesh`);
   console.log(`Gateway: ${GATEWAY_URL}`);
   console.log(`Node: ${protocol.NODE_ID} (${protocol.NODE_NAME})`);
   console.log(`\nTransports: ${[...router._transports.keys()].join(', ')}`);
@@ -468,6 +565,24 @@ app.listen(PORT, () => {
   console.log('  GET  /api/peers');
   console.log('  GET  /api/logs');
   console.log('  POST /api/mcp/:tool');
+
+  // Email endpoints
+  if (email.configured) {
+    console.log('  POST /api/email/send');
+    console.log('  GET  /api/email/search');
+    console.log('  GET  /api/email/drafts');
+  } else {
+    console.log('\n  Email: disponível via Gmail MCP');
+  }
+
+  // Webhook endpoints
+  console.log('  POST /api/webhook/send');
+  console.log('  POST /api/webhook/endpoints      — registrar endpoint');
+  console.log('  GET  /api/webhook/endpoints       — listar endpoints');
+  console.log('  POST /api/webhook/incoming/:src   — receber webhook');
+  if (webhook.configured) {
+    console.log(`  Webhooks configurados: ${[...webhook._endpoints.keys()].join(', ')}`);
+  }
 
   // Telegram endpoints (só mostra se configurado)
   if (telegram.configured) {
