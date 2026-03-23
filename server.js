@@ -31,6 +31,136 @@ function authHeaders(req) {
 
 app.use(express.json());
 
+// ─── Monitor / Watchdog ────────────────────────────────────────────────
+const MONITOR_INTERVAL = parseInt(process.env.MONITOR_INTERVAL || '120000', 10); // 2 min
+const ALERT_PHONE     = process.env.ALERT_PHONE || '';  // ex: 5511999999999
+const SLOW_THRESHOLD  = parseInt(process.env.SLOW_THRESHOLD || '10000', 10); // 10s
+
+const monitorState = {
+  status: 'unknown',       // 'ok' | 'degraded' | 'offline'
+  lastCheck: null,
+  lastOk: null,
+  lastError: null,
+  errorMessage: null,
+  responseTime: null,
+  consecutiveFailures: 0,
+  alertSent: false,         // evita spam de alertas
+};
+
+async function sendAlert(message) {
+  if (!ALERT_PHONE) {
+    console.log(`[monitor] Alerta (sem ALERT_PHONE): ${message}`);
+    return;
+  }
+  try {
+    await callMcpTool('send_whatsapp', { phone: ALERT_PHONE, message });
+    console.log(`[monitor] Alerta enviado para ${ALERT_PHONE}`);
+  } catch (err) {
+    console.error(`[monitor] Falha ao enviar alerta: ${err.message}`);
+  }
+}
+
+async function runHealthCheck() {
+  const start = Date.now();
+  monitorState.lastCheck = new Date().toISOString();
+
+  try {
+    // 1. Testa o health do Express/gateway
+    const healthRes = await proxyFetch(`${GATEWAY_URL}/api/health`, {
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!healthRes.ok) throw new Error(`Health retornou ${healthRes.status}`);
+    const healthData = await healthRes.json();
+
+    // 2. Testa o MCP (é o que costuma cair com 502)
+    const mcpRes = await proxyFetch(`${GATEWAY_URL}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool: 'get_status', arguments: {} }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    const elapsed = Date.now() - start;
+    monitorState.responseTime = elapsed;
+
+    if (!mcpRes.ok) {
+      const text = await mcpRes.text();
+      const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
+      throw new Error(isHtml ? `MCP offline (${mcpRes.status})` : `MCP erro ${mcpRes.status}: ${text.slice(0, 200)}`);
+    }
+
+    // 3. Verifica se está lento
+    if (elapsed > SLOW_THRESHOLD) {
+      monitorState.status = 'degraded';
+      monitorState.errorMessage = `Resposta lenta: ${elapsed}ms`;
+      monitorState.consecutiveFailures++;
+
+      if (!monitorState.alertSent && monitorState.consecutiveFailures >= 2) {
+        monitorState.alertSent = true;
+        await sendAlert(`⚠️ Tulipa lenta — resposta em ${elapsed}ms (limite: ${SLOW_THRESHOLD}ms)`);
+      }
+      return;
+    }
+
+    // Tudo OK
+    const wasDown = monitorState.status === 'offline' || monitorState.status === 'degraded';
+    monitorState.status = 'ok';
+    monitorState.lastOk = monitorState.lastCheck;
+    monitorState.errorMessage = null;
+    monitorState.consecutiveFailures = 0;
+
+    // Notifica recuperação
+    if (wasDown && monitorState.alertSent) {
+      monitorState.alertSent = false;
+      await sendAlert(`✅ Tulipa voltou ao normal — resposta em ${elapsed}ms`);
+    }
+
+  } catch (err) {
+    const elapsed = Date.now() - start;
+    monitorState.responseTime = elapsed;
+    monitorState.status = 'offline';
+    monitorState.lastError = monitorState.lastCheck;
+    monitorState.errorMessage = err.message;
+    monitorState.consecutiveFailures++;
+
+    console.error(`[monitor] Falha #${monitorState.consecutiveFailures}: ${err.message}`);
+
+    // Alerta após 2 falhas consecutivas (evita falso positivo)
+    if (!monitorState.alertSent && monitorState.consecutiveFailures >= 2) {
+      monitorState.alertSent = true;
+      await sendAlert(`🔴 Tulipa OFFLINE — ${err.message} (${monitorState.consecutiveFailures} falhas consecutivas)`);
+    }
+  }
+}
+
+// Endpoint para consultar estado do monitor
+app.get('/api/monitor', (_req, res) => {
+  res.json({
+    monitor: monitorState,
+    config: {
+      interval: MONITOR_INTERVAL,
+      alertPhone: ALERT_PHONE ? `***${ALERT_PHONE.slice(-4)}` : '(não configurado)',
+      slowThreshold: SLOW_THRESHOLD,
+    },
+  });
+});
+
+// Inicia o watchdog
+let monitorTimer = null;
+function startMonitor() {
+  if (!MONITOR_INTERVAL || MONITOR_INTERVAL < 10000) return;
+  console.log(`[monitor] Watchdog ativo — check a cada ${MONITOR_INTERVAL / 1000}s`);
+  if (ALERT_PHONE) console.log(`[monitor] Alertas WhatsApp para ***${ALERT_PHONE.slice(-4)}`);
+  else console.log('[monitor] ALERT_PHONE não configurado — alertas somente no console');
+
+  // Primeiro check após 10s (dá tempo do servidor subir)
+  setTimeout(() => {
+    runHealthCheck();
+    monitorTimer = setInterval(runHealthCheck, MONITOR_INTERVAL);
+  }, 10000);
+}
+
 // Helper: chama MCP tool no gateway
 async function callMcpTool(tool, args = {}, req = null) {
   const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
@@ -142,9 +272,12 @@ app.listen(PORT, () => {
   console.log('\nEndpoints disponíveis:');
   console.log('  GET  /api/health');
   console.log('  GET  /api/status');
+  console.log('  GET  /api/monitor');
   console.log('  GET  /api/whatsapp/history?phone=5511...&limit=50');
   console.log('  POST /api/whatsapp/send  { phone, message }');
   console.log('  GET  /api/peers');
   console.log('  GET  /api/logs?limit=100');
   console.log('  POST /api/mcp/:tool  { ...arguments }');
+
+  startMonitor();
 });

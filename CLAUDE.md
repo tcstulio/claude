@@ -38,6 +38,28 @@ curl -X POST https://agent.coolgroove.com.br/mcp \
   -d '{"tool": "get_status", "arguments": {}}'
 ```
 
+## Monitor / Watchdog
+
+O servidor inclui um sistema de monitoramento automático que verifica o gateway periodicamente e envia alertas via WhatsApp.
+
+### Variáveis de ambiente
+| Variável | Padrão | Descrição |
+|---|---|---|
+| `ALERT_PHONE` | (vazio) | Número WhatsApp para alertas (ex: 5511999999999) |
+| `MONITOR_INTERVAL` | `120000` | Intervalo entre checks em ms (2 min) |
+| `SLOW_THRESHOLD` | `10000` | Tempo máximo aceitável de resposta em ms |
+
+### Comportamento
+- Verifica health do gateway + MCP a cada `MONITOR_INTERVAL`
+- Envia alerta após **2 falhas consecutivas** (evita falso positivo)
+- Notifica quando o serviço **volta ao normal**
+- `GET /api/monitor` retorna estado atual do watchdog
+
+### Tipos de alerta
+- 🔴 **OFFLINE** — gateway ou MCP inacessível
+- ⚠️ **Lenta** — resposta acima do threshold
+- ✅ **Recuperação** — voltou ao normal
+
 ## Convenções
 - Branch de desenvolvimento: sempre prefixado com `claude/`
 - Idioma principal: português (BR)
