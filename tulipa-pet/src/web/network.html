@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tulipa Pet Network</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #0d1117; --card: #161b22; --border: #30363d;
+            --text: #e6edf3; --muted: #8b949e; --accent: #e91e63;
+            --green: #4caf50; --yellow: #ffeb3b; --red: #f44336;
+            --blue: #42a5f5; --purple: #ab47bc; --orange: #ff9800;
+        }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 16px; }
+
+        header { text-align: center; padding: 20px 0; }
+        header h1 { font-size: 1.6em; color: var(--accent); }
+        header .subtitle { color: var(--muted); font-size: 0.9em; margin-top: 4px; }
+
+        .stats-bar { display: flex; gap: 16px; justify-content: center; margin: 16px 0; flex-wrap: wrap; }
+        .stat { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 20px; text-align: center; min-width: 120px; }
+        .stat-value { font-size: 1.8em; font-weight: bold; }
+        .stat-label { color: var(--muted); font-size: 0.8em; margin-top: 2px; }
+
+        .pets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin: 24px 0; }
+
+        .pet-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; transition: border-color 0.3s, transform 0.2s; position: relative; overflow: hidden; }
+        .pet-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+        .pet-card.self { border-color: var(--accent); }
+        .pet-card.offline { opacity: 0.6; }
+
+        .pet-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .pet-sprite { font-size: 2.5em; }
+        .pet-name { font-size: 1.2em; font-weight: bold; }
+        .pet-meta { color: var(--muted); font-size: 0.8em; }
+        .pet-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold; }
+        .badge-online { background: rgba(76,175,80,0.2); color: var(--green); }
+        .badge-offline { background: rgba(139,148,158,0.2); color: var(--muted); }
+        .badge-self { background: rgba(233,30,99,0.2); color: var(--accent); }
+
+        .pet-mood { margin: 8px 0; padding: 6px 14px; border-radius: 16px; display: inline-block; font-size: 0.9em; }
+
+        .needs-mini { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 12px; }
+        .need-item { text-align: center; padding: 6px; border-radius: 8px; background: rgba(255,255,255,0.03); }
+        .need-icon { font-size: 1.1em; }
+        .need-bar { width: 100%; height: 4px; background: var(--border); border-radius: 2px; margin-top: 4px; overflow: hidden; }
+        .need-fill { height: 100%; border-radius: 2px; transition: width 0.5s; }
+        .need-value { font-size: 0.7em; color: var(--muted); margin-top: 2px; }
+
+        .pet-score { position: absolute; top: 16px; right: 16px; width: 50px; height: 50px; }
+        .score-circle { fill: none; stroke-width: 4; }
+        .score-bg { stroke: var(--border); }
+        .score-value { font-size: 14px; font-weight: bold; fill: var(--text); text-anchor: middle; dominant-baseline: central; }
+
+        .events-section { margin-top: 24px; }
+        .events-section h3 { color: var(--muted); font-size: 0.9em; margin-bottom: 10px; }
+        .event-list { max-height: 200px; overflow-y: auto; }
+        .event { padding: 6px 10px; border-left: 3px solid var(--border); margin-bottom: 4px; font-size: 0.85em; background: var(--card); border-radius: 0 6px 6px 0; }
+        .event-time { color: var(--muted); font-size: 0.75em; }
+        .event.social { border-left-color: var(--purple); }
+        .event.gift { border-left-color: var(--orange); }
+        .event.interaction { border-left-color: var(--blue); }
+
+        .friendship-bar { margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 0.8em; }
+        .friendship-hearts { color: var(--accent); letter-spacing: 2px; }
+
+        .nav { text-align: center; margin-top: 20px; }
+        .nav a { color: var(--accent); text-decoration: none; padding: 8px 16px; border: 1px solid var(--accent); border-radius: 8px; }
+        .nav a:hover { background: rgba(233,30,99,0.1); }
+
+        .loading { text-align: center; padding: 40px; color: var(--muted); }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Tulipa Pet Network</h1>
+            <p class="subtitle">Todos os pets da rede Tulipa em tempo real</p>
+        </header>
+
+        <div class="stats-bar">
+            <div class="stat"><div class="stat-value" id="totalPets">-</div><div class="stat-label">Pets</div></div>
+            <div class="stat"><div class="stat-value" id="onlinePets">-</div><div class="stat-label">Online</div></div>
+            <div class="stat"><div class="stat-value" id="avgScore">-</div><div class="stat-label">Score Medio</div></div>
+            <div class="stat"><div class="stat-value" id="totalFriendships">-</div><div class="stat-label">Amizades</div></div>
+        </div>
+
+        <div class="pets-grid" id="petsGrid">
+            <div class="loading pulse">Buscando pets na rede...</div>
+        </div>
+
+        <div class="events-section">
+            <h3>Atividade da Rede</h3>
+            <div class="event-list" id="networkEvents"></div>
+        </div>
+
+        <div class="nav">
+            <a href="/">Meu Pet</a>
+        </div>
+    </div>
+
+    <script>
+    const NEED_COLORS = {
+        energia: '#ffeb3b', limpeza: '#42a5f5', saude: '#f44336',
+        seguranca: '#4caf50', humor: '#ab47bc', social: '#e91e63'
+    };
+
+    let allPets = [];
+    let networkEvents = [];
+
+    function needColor(value) {
+        if (value >= 70) return 'var(--green)';
+        if (value >= 40) return 'var(--yellow)';
+        return 'var(--red)';
+    }
+
+    function friendshipHearts(level) {
+        const full = Math.floor(level / 5);
+        return '❤️'.repeat(Math.min(full, 5)) + '🤍'.repeat(Math.max(0, 5 - full));
+    }
+
+    function scoreColor(score) {
+        if (score >= 70) return 'var(--green)';
+        if (score >= 40) return 'var(--yellow)';
+        return 'var(--red)';
+    }
+
+    function renderPetCard(pet, isSelf = false, friendship = null) {
+        const s = pet;
+        const score = s.overallScore || 0;
+        const circumference = 2 * Math.PI * 20;
+        const offset = circumference - (score / 100) * circumference;
+
+        return `
+        <div class="pet-card ${isSelf ? 'self' : ''} ${s.online === false ? 'offline' : ''}">
+            <svg class="pet-score" viewBox="0 0 50 50">
+                <circle class="score-circle score-bg" cx="25" cy="25" r="20"/>
+                <circle class="score-circle" cx="25" cy="25" r="20"
+                    stroke="${scoreColor(score)}"
+                    stroke-dasharray="${circumference}"
+                    stroke-dashoffset="${offset}"
+                    transform="rotate(-90 25 25)"/>
+                <text class="score-value" x="25" y="25">${score}</text>
+            </svg>
+            <div class="pet-header">
+                <div class="pet-sprite">${s.stage?.sprite || '🌱'}</div>
+                <div>
+                    <div class="pet-name">${s.name || 'Unknown'}</div>
+                    <div class="pet-meta">
+                        Lv.${s.level || 0} | XP ${s.xp || 0} | ${s.age?.total || '?'}
+                    </div>
+                    <span class="pet-badge ${isSelf ? 'badge-self' : s.online !== false ? 'badge-online' : 'badge-offline'}">
+                        ${isSelf ? 'EU' : s.online !== false ? 'ONLINE' : 'OFFLINE'}
+                    </span>
+                </div>
+            </div>
+            <div class="pet-mood" style="background:${s.mood?.color || '#333'}22; color:${s.mood?.color || '#fff'}">
+                ${s.mood?.face || '?'} ${s.mood?.name || 'desconhecido'}
+            </div>
+            <div class="needs-mini">
+                ${Object.entries(s.needs || {}).map(([key, n]) => `
+                    <div class="need-item">
+                        <div class="need-icon">${n.icon}</div>
+                        <div class="need-bar"><div class="need-fill" style="width:${n.value}%; background:${needColor(n.value)}"></div></div>
+                        <div class="need-value">${n.value}%</div>
+                    </div>
+                `).join('')}
+            </div>
+            ${friendship ? `
+                <div class="friendship-bar">
+                    <span class="friendship-hearts">${friendshipHearts(friendship.level)}</span>
+                    <span style="color:var(--muted)">${friendship.encounters} encontros</span>
+                </div>
+            ` : ''}
+        </div>`;
+    }
+
+    function addNetworkEvent(type, message) {
+        networkEvents.unshift({ type, message, time: new Date() });
+        if (networkEvents.length > 50) networkEvents.pop();
+        renderEvents();
+    }
+
+    function renderEvents() {
+        const el = document.getElementById('networkEvents');
+        el.innerHTML = networkEvents.map(e => `
+            <div class="event ${e.type}">
+                <span class="event-time">${e.time.toLocaleTimeString()}</span>
+                ${e.message}
+            </div>
+        `).join('') || '<div style="color:var(--muted);padding:10px">Nenhuma atividade ainda</div>';
+    }
+
+    async function fetchAndRender() {
+        try {
+            // Buscar meu pet
+            const myPetRes = await fetch('/api/pet');
+            const myPet = await myPetRes.json();
+            myPet.online = true;
+
+            // Buscar rede de pets
+            let networkPets = [];
+            try {
+                const netRes = await fetch('/api/pets/network');
+                networkPets = await netRes.json();
+            } catch {}
+
+            // Buscar todos os pets (inclui self)
+            let allPetsData = [];
+            try {
+                const allRes = await fetch('/api/pets');
+                allPetsData = await allRes.json();
+            } catch {}
+
+            // Montar lista: self primeiro, depois rede
+            const grid = document.getElementById('petsGrid');
+            let html = renderPetCard(myPet, true);
+
+            // Pets da rede
+            for (const np of networkPets) {
+                if (np.snapshot) {
+                    html += renderPetCard({
+                        ...np.snapshot,
+                        name: np.snapshot.name || np.peerName || np.peerId,
+                        online: np.online !== false,
+                    }, false, np.friendship);
+                }
+            }
+
+            // Se não tem pets na rede, mostrar mensagem
+            if (networkPets.length === 0) {
+                html += `
+                <div class="pet-card" style="text-align:center;padding:40px">
+                    <div style="font-size:3em;margin-bottom:10px">🌍</div>
+                    <div style="color:var(--muted)">Nenhum outro pet na rede ainda</div>
+                    <div style="color:var(--muted);font-size:0.8em;margin-top:8px">
+                        Conecte mais agentes Tulipa para ver seus pets aqui!
+                    </div>
+                </div>`;
+            }
+
+            grid.innerHTML = html;
+
+            // Stats
+            const total = 1 + networkPets.length;
+            const online = 1 + networkPets.filter(p => p.online !== false).length;
+            const scores = [myPet.overallScore, ...networkPets.filter(p => p.snapshot).map(p => p.snapshot.overallScore || 0)];
+            const avg = Math.round(scores.reduce((a,b) => a+b, 0) / scores.length);
+            const friendships = networkPets.filter(p => p.friendship?.level > 0).length;
+
+            document.getElementById('totalPets').textContent = total;
+            document.getElementById('onlinePets').textContent = online;
+            document.getElementById('avgScore').textContent = avg;
+            document.getElementById('totalFriendships').textContent = friendships;
+
+        } catch (err) {
+            console.error('Fetch error:', err);
+        }
+    }
+
+    // WebSocket para updates em tempo real
+    function connectWS() {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${proto}//${location.host}/ws`);
+        ws.onmessage = (e) => {
+            try {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'update') fetchAndRender();
+                if (msg.type === 'network-sync') {
+                    addNetworkEvent('social', `Sync com ${msg.data?.peers || 0} pets na rede`);
+                    fetchAndRender();
+                }
+                if (msg.type === 'gift-received') {
+                    addNetworkEvent('gift', `Presente recebido de ${msg.data?.from || '?'}: ${msg.data?.need || '?'}`);
+                }
+                if (msg.type === 'interaction') {
+                    addNetworkEvent('interaction', `${msg.data?.action || 'Interação'} com ${msg.data?.pet || 'pet'}`);
+                }
+            } catch {}
+        };
+        ws.onclose = () => setTimeout(connectWS, 5000);
+    }
+
+    // Init
+    fetchAndRender();
+    connectWS();
+    renderEvents();
+    setInterval(fetchAndRender, 30000); // Atualiza a cada 30s
+    </script>
+</body>
+</html>
