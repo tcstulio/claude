@@ -135,14 +135,17 @@ test/                          — 78 testes (todos passando)
 Token admin criado manualmente no 2070: `tulipa_4d30...d79b` (tok_xxx, scope [read,write,admin]).
 Tokens no 2070 são hasheados — valor original só aparece na criação.
 
-### Setup executado no 2070
+### Setup executado no 2070 (COMPLETO)
 1. git init + fetch + reset --hard origin/main → **v0.4.0**
 2. npm install + typescript instalado
 3. network compilado (--skipLibCheck)
 4. supervisor compilado
 5. gateway: dist/ do git (erros TS non-critical, JS funcional)
-6. Hub mode: pendente (precisa rodar no terminal)
-7. Supervisor: pendente (precisa restart do gateway)
+6. Hub mode: **ATIVO** (hubMode: true)
+7. Supervisor: **RODANDO** (com fix named pipe para Windows)
+8. IPC fix: Unix socket → Windows named pipe (`\\.\pipe\tulipa-supervisor`)
+9. services.yaml: gateway adicionado, whatsapp-bridge desabilitado
+10. Status: **ok** (gateway ok + supervisor ok)
 
 ### Handshake fix
 - `mesh.requestAdminToken(nodeId)` — solicita create_token no peer via MCP
