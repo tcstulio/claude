@@ -41,6 +41,7 @@ function authHeaders(req) {
 }
 
 app.use(express.json());
+app.use(express.static('public'));
 
 // ─── Helper: chama MCP tool no gateway ─────────────────────────────────
 async function callMcpTool(tool, args = {}, req = null) {
@@ -549,6 +550,7 @@ function startMonitor() {
 
 app.listen(PORT, () => {
   console.log(`\nTulipa API v4.0 — Multi-Channel + Mesh`);
+  console.log(`Dashboard: http://localhost:${PORT}/`);
   console.log(`Gateway: ${GATEWAY_URL}`);
   console.log(`Node: ${protocol.NODE_ID} (${protocol.NODE_NAME})`);
   console.log(`\nTransports: ${[...router._transports.keys()].join(', ')}`);
