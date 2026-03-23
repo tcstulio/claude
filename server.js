@@ -142,6 +142,7 @@ if (webhook.configured) router.register(webhook);
 const mesh = new MeshManager({
   router,
   callMcpTool,
+  fetch: proxyFetch,
   discoveryInterval: parseInt(process.env.MESH_DISCOVERY_INTERVAL || '120000', 10),
   heartbeatInterval: parseInt(process.env.MESH_HEARTBEAT_INTERVAL || '60000', 10),
 });
@@ -587,6 +588,23 @@ app.post('/api/mesh/send/:nodeId', async (req, res) => {
   }
 });
 
+// Receber mensagem de outro peer (endpoint P2P)
+app.post('/api/mesh/incoming', (req, res) => {
+  try {
+    const { from, message } = req.body;
+    if (!message) return res.status(400).json({ error: 'Campo "message" é obrigatório' });
+    const parsed = mesh.handleMessage(message);
+    if (parsed) {
+      console.log(`[mesh] Mensagem recebida de ${from || 'unknown'}: ${parsed.type}`);
+      res.json({ ok: true, type: parsed.type, id: parsed.id });
+    } else {
+      res.json({ ok: false, error: 'Mensagem inválida ou não reconhecida' });
+    }
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Heartbeat manual (pinga todos os peers)
 app.post('/api/mesh/heartbeat', async (_req, res) => {
   try {
@@ -682,6 +700,7 @@ app.listen(PORT, () => {
   console.log('  POST /api/mesh/discover       — forçar discovery');
   console.log('  POST /api/mesh/ping/:nodeId   — ping peer');
   console.log('  POST /api/mesh/send/:nodeId   — enviar para peer');
+  console.log('  POST /api/mesh/incoming       — receber de peer (P2P)');
   console.log('  POST /api/mesh/heartbeat      — pingar todos');
 
   // Inicia mesh (discovery + heartbeat)
