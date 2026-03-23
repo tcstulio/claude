@@ -6,10 +6,15 @@ const WhatsAppTransport = require('./lib/transport/whatsapp');
 const TelegramTransport = require('./lib/transport/telegram');
 const EmailTransport = require('./lib/transport/email');
 const WebhookTransport = require('./lib/transport/webhook');
-const MessageQueue = require('./lib/queue');
 const Router = require('./lib/router');
 const MeshManager = require('./lib/mesh');
 const protocol = require('./lib/protocol');
+
+// ─── Fase 9-11: SQLite, Task Engine, Identity ─────────────────────────
+const Storage = require('./lib/storage');
+const MessageQueueSQLite = require('./lib/queue-sqlite');
+const TaskEngine = require('./lib/task-engine');
+const Identity = require('./lib/identity');
 
 const app = express();
 
@@ -118,8 +123,18 @@ async function callMcpTool(tool, args = {}, req = null) {
   return res.json();
 }
 
+// ─── Inicializa Storage (SQLite) ──────────────────────────────────────
+const storage = new Storage();
+
+// ─── Inicializa Identity (Ed25519) ────────────────────────────────────
+const identity = new Identity({
+  nodeId: protocol.NODE_ID,
+  nodeName: protocol.NODE_NAME,
+});
+
 // ─── Inicializa Transport Layer ────────────────────────────────────────
-const queue = new MessageQueue({
+const queue = new MessageQueueSQLite({
+  storage,
   sendFn: async (item) => {
     await router.send(item.destination, item.message, { preferChannel: item.channel });
   },
@@ -162,9 +177,36 @@ const mesh = new MeshManager({
 
 mesh.on('peer-joined', (peer) => {
   console.log(`[mesh] Novo peer: ${peer.name} — canais: ${peer.channels.join(', ') || 'nenhum'}`);
+  // Persiste peer no SQLite
+  storage.upsertPeer(peer);
 });
 mesh.on('peer-left', (peer) => {
   console.log(`[mesh] Peer saiu: ${peer.name}`);
+});
+
+// ─── Task Engine ────────────────────────────────────────────────────
+const taskEngine = new TaskEngine({
+  storage,
+  mesh,
+  callMcpTool,
+  maxConcurrent: parseInt(process.env.TASK_MAX_CONCURRENT || '5', 10),
+});
+
+// Handler: enviar mensagem via router
+taskEngine.registerHandler('send_message', async (task) => {
+  const { destination, message, channel } = task.input;
+  return router.send(destination, message, { preferChannel: channel });
+});
+
+// Handler: chamar MCP tool
+taskEngine.registerHandler('mcp_call', async (task) => {
+  const { tool, args } = task.input;
+  return callMcpTool(tool, args);
+});
+
+// Handler genérico (echo)
+taskEngine.registerHandler('generic', async (task) => {
+  return { received: task.description, input: task.input };
 });
 
 // Log de eventos do router
@@ -830,6 +872,98 @@ app.post('/api/deploy/remote', requireAuth, async (req, res) => {
   }
 });
 
+// ─── Task Engine endpoints ──────────────────────────────────────────
+
+app.get('/api/tasks', requireAuth, (_req, res) => {
+  const { status } = _req.query;
+  if (status) {
+    res.json({ tasks: storage.getTasksByStatus(status) });
+  } else {
+    res.json({ stats: storage.getTaskStats(), tasks: taskEngine.toJSON() });
+  }
+});
+
+app.post('/api/tasks', requireAuth, (req, res) => {
+  const { description, type, input, priority, assignedTo } = req.body;
+  if (!description) return res.status(400).json({ error: 'Campo "description" é obrigatório' });
+  const task = taskEngine.submit(description, { type, input, priority, assignedTo });
+  res.json({ ok: true, task });
+});
+
+app.post('/api/tasks/:id/decompose', requireAuth, (req, res) => {
+  const { subtasks } = req.body;
+  if (!subtasks || !Array.isArray(subtasks)) {
+    return res.status(400).json({ error: 'Campo "subtasks" (array) é obrigatório' });
+  }
+  const created = taskEngine.decompose(req.params.id, subtasks);
+  res.json({ ok: true, created: created.length, subtasks: created });
+});
+
+app.post('/api/tasks/:id/delegate', requireAuth, async (req, res) => {
+  try {
+    const { nodeId } = req.body;
+    const target = nodeId || taskEngine.autoAssign(req.params.id);
+    if (!target) return res.status(400).json({ error: 'Nenhum peer disponível para delegação' });
+    const result = await taskEngine.delegate(req.params.id, target);
+    res.json({ ok: true, nodeId: target, result });
+  } catch (err) {
+    res.status(502).json({ error: 'Delegação falhou', detail: err.message });
+  }
+});
+
+app.get('/api/tasks/:id', requireAuth, (req, res) => {
+  const task = storage.getTask(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task não encontrada' });
+  const subtasks = storage.getSubtasks(req.params.id);
+  res.json({ task, subtasks });
+});
+
+// ─── Identity endpoints ────────────────────────────────────────────
+
+app.get('/api/identity', (_req, res) => {
+  res.json(identity.exportPublicKey());
+});
+
+app.post('/api/identity/sign', requireAuth, (req, res) => {
+  const { data } = req.body;
+  if (!data) return res.status(400).json({ error: 'Campo "data" é obrigatório' });
+  const signature = identity.sign(data);
+  res.json({ signature, signerKey: identity.publicKey, fingerprint: identity.fingerprint });
+});
+
+app.post('/api/identity/verify', (req, res) => {
+  const { data, signature, publicKey } = req.body;
+  if (!data || !signature || !publicKey) {
+    return res.status(400).json({ error: 'Campos "data", "signature" e "publicKey" são obrigatórios' });
+  }
+  const valid = Identity.verify(data, signature, publicKey);
+  res.json({ valid });
+});
+
+// ─── Storage / Search endpoints ──────────────────────────────────────
+
+app.get('/api/storage/stats', (_req, res) => {
+  res.json(storage.stats);
+});
+
+app.get('/api/messages/search', requireAuth, (req, res) => {
+  const { q, limit } = req.query;
+  if (!q) return res.status(400).json({ error: 'Query param "q" é obrigatório' });
+  const results = storage.searchMessages(q, limit ? parseInt(limit, 10) : 50);
+  res.json({ results, count: results.length });
+});
+
+// ─── Audit Log endpoint ────────────────────────────────────────────
+
+app.get('/api/audit', requireAuth, (req, res) => {
+  const { event, source, since, limit } = req.query;
+  const logs = storage.getAuditLog({
+    event, source, since,
+    limit: limit ? parseInt(limit, 10) : 100,
+  });
+  res.json({ logs, count: logs.length });
+});
+
 // ─── Startup ───────────────────────────────────────────────────────────
 
 let monitorTimer = null;
@@ -846,7 +980,7 @@ function startMonitor() {
 }
 
 app.listen(PORT, () => {
-  console.log(`\nTulipa API v4.0 — Multi-Channel + Mesh`);
+  console.log(`\nTulipa API v5.0 — SQLite + Tasks + Identity + Mesh`);
   console.log(`Dashboard: http://localhost:${PORT}/`);
   console.log(`Gateway: ${GATEWAY_URL}`);
   console.log(`Node: ${protocol.NODE_ID} (${protocol.NODE_NAME})`);
@@ -914,6 +1048,27 @@ app.listen(PORT, () => {
   console.log('  POST /api/deploy/remote       — deploy remoto via run_command');
   console.log('  GET  /api/deploy/log          — log de deploys');
 
+  // Task Engine
+  console.log('\n  Tasks:');
+  console.log('  GET  /api/tasks               — listar tarefas');
+  console.log('  POST /api/tasks               — criar tarefa');
+  console.log('  GET  /api/tasks/:id           — detalhe da tarefa');
+  console.log('  POST /api/tasks/:id/decompose — decompor em subtarefas');
+  console.log('  POST /api/tasks/:id/delegate  — delegar para peer');
+
+  // Identity
+  console.log('\n  Identity:');
+  console.log('  GET  /api/identity            — chave pública + fingerprint');
+  console.log('  POST /api/identity/sign       — assinar dados');
+  console.log('  POST /api/identity/verify     — verificar assinatura');
+  console.log(`  Fingerprint: ${identity.fingerprint}`);
+
+  // Storage
+  console.log('\n  Storage:');
+  console.log('  GET  /api/storage/stats       — estatísticas do banco');
+  console.log('  GET  /api/messages/search     — buscar mensagens');
+  console.log('  GET  /api/audit               — log de auditoria');
+
   // Registra este nó no service registry
   registerSelf();
 
@@ -922,6 +1077,16 @@ app.listen(PORT, () => {
     console.error(`[mesh] Falha ao iniciar: ${err.message}`);
   });
 
+  // Inicia task engine
+  taskEngine.start();
+
   startMonitor();
   queue.start(5000);
+
+  // Log audit de startup
+  storage.log('system.startup', protocol.NODE_ID, null, {
+    version: '5.0',
+    transports: [...router._transports.keys()],
+    fingerprint: identity.fingerprint,
+  });
 });
