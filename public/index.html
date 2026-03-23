@@ -217,12 +217,36 @@
 <div class="refresh-info">
   Auto-refresh: <span id="refresh-countdown">10</span>s
   | <button class="btn" onclick="refresh()" style="display:inline;padding:2px 8px">Atualizar agora</button>
+  | <button class="btn" onclick="setToken()" style="display:inline;padding:2px 8px" id="auth-btn">Autenticar</button>
+  <span id="auth-status" style="margin-left:6px;font-size:0.7rem"></span>
 </div>
 
 <script>
 const BASE = window.location.origin;
 const logs = [];
 let countdown = 10;
+let authToken = localStorage.getItem('tulipa_token') || '';
+
+function setToken() {
+  const t = prompt('Token de acesso (Bearer token):');
+  if (t !== null) {
+    authToken = t.trim();
+    if (authToken) {
+      localStorage.setItem('tulipa_token', authToken);
+      document.getElementById('auth-status').textContent = 'autenticado';
+      document.getElementById('auth-status').style.color = 'var(--green)';
+      log('Token configurado');
+    } else {
+      localStorage.removeItem('tulipa_token');
+      document.getElementById('auth-status').textContent = '';
+    }
+  }
+}
+
+if (authToken) {
+  document.getElementById('auth-status').textContent = 'autenticado';
+  document.getElementById('auth-status').style.color = 'var(--green)';
+}
 
 function log(msg) {
   const time = new Date().toLocaleTimeString('pt-BR');
@@ -244,9 +268,16 @@ function dotColor(status) {
   return 'red';
 }
 
-async function api(path, opts) {
+async function api(path, opts = {}) {
   try {
+    if (authToken) {
+      opts.headers = { ...opts.headers, 'Authorization': `Bearer ${authToken}` };
+    }
     const res = await fetch(BASE + path, opts);
+    if (res.status === 401) {
+      document.getElementById('auth-status').textContent = 'token inválido';
+      document.getElementById('auth-status').style.color = 'var(--red)';
+    }
     return await res.json();
   } catch (err) {
     log(`Erro: ${path} — ${err.message}`);

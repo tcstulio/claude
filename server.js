@@ -43,6 +43,61 @@ function authHeaders(req) {
 app.use(express.json());
 app.use(express.static('public'));
 
+// ─── Rate Limiting ────────────────────────────────────────────────────
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 min
+const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '60', 10); // 60 req/min
+const rateLimitMap = new Map();
+
+function rateLimit(req, res, next) {
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const now = Date.now();
+  let entry = rateLimitMap.get(ip);
+
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW) {
+    entry = { count: 0, windowStart: now };
+    rateLimitMap.set(ip, entry);
+  }
+
+  entry.count++;
+
+  if (entry.count > RATE_LIMIT_MAX) {
+    res.set('Retry-After', Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW - now) / 1000));
+    return res.status(429).json({ error: 'Rate limit excedido', retryAfter: Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW - now) / 1000) });
+  }
+
+  next();
+}
+
+// Limpa IPs antigos a cada 5 min
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitMap) {
+    if (now - entry.windowStart > RATE_LIMIT_WINDOW * 2) rateLimitMap.delete(ip);
+  }
+}, 5 * 60 * 1000);
+
+// Rate limit em todas as rotas API
+app.use('/api', rateLimit);
+
+// ─── Autenticação do Dashboard ────────────────────────────────────────
+const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || process.env.TULIPA_TOKEN || '';
+
+function requireAuth(req, res, next) {
+  // Sem token configurado = modo dev (sem auth)
+  if (!DASHBOARD_TOKEN) return next();
+
+  const auth = req.get('authorization') || '';
+  const queryToken = req.query.token;
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : queryToken;
+
+  if (token === DASHBOARD_TOKEN) return next();
+
+  res.status(401).json({ error: 'Token inválido ou ausente', hint: 'Envie Authorization: Bearer <token>' });
+}
+
+// Rotas públicas (sem auth): health, monitor, services GET, dashboard HTML
+// Rotas protegidas: tudo que modifica estado (send, deploy, mcp, etc)
+
 // ─── Helper: chama MCP tool no gateway ─────────────────────────────────
 async function callMcpTool(tool, args = {}, req = null) {
   const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
@@ -254,7 +309,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 // WhatsApp — agora via transport layer
-app.get('/api/whatsapp/history', async (req, res) => {
+app.get('/api/whatsapp/history', requireAuth, async (req, res) => {
   try {
     const { phone, limit } = req.query;
     const result = await whatsapp.receive(phone, { limit: limit ? parseInt(limit, 10) : undefined });
@@ -264,7 +319,7 @@ app.get('/api/whatsapp/history', async (req, res) => {
   }
 });
 
-app.post('/api/whatsapp/send', async (req, res) => {
+app.post('/api/whatsapp/send', requireAuth, async (req, res) => {
   try {
     const { phone, message } = req.body;
     if (!phone || !message) {
@@ -297,7 +352,7 @@ app.get('/api/peers', async (req, res) => {
   }
 });
 
-app.get('/api/logs', async (req, res) => {
+app.get('/api/logs', requireAuth, async (req, res) => {
   try {
     const { limit } = req.query;
     const args = {};
@@ -328,7 +383,7 @@ app.get('/api/transport/health', async (_req, res) => {
 });
 
 // Enviar mensagem via protocolo padronizado
-app.post('/api/send', async (req, res) => {
+app.post('/api/send', requireAuth, async (req, res) => {
   try {
     const { destination, message, type, payload, channel } = req.body;
     if (!destination) {
@@ -354,7 +409,7 @@ app.post('/api/send', async (req, res) => {
 
 // ─── Telegram endpoints ────────────────────────────────────────────────
 
-app.post('/api/telegram/send', async (req, res) => {
+app.post('/api/telegram/send', requireAuth, async (req, res) => {
   try {
     const { chatId, message } = req.body;
     if (!message) {
@@ -383,7 +438,7 @@ app.get('/api/telegram/updates', async (req, res) => {
 
 // ─── Email endpoints ──────────────────────────────────────────────────
 
-app.post('/api/email/send', async (req, res) => {
+app.post('/api/email/send', requireAuth, async (req, res) => {
   try {
     const { to, subject, body, message } = req.body;
     if (!to) return res.status(400).json({ error: 'Campo "to" é obrigatório' });
@@ -417,7 +472,7 @@ app.get('/api/email/drafts', async (_req, res) => {
 
 // ─── Webhook endpoints ────────────────────────────────────────────────
 
-app.post('/api/webhook/send', async (req, res) => {
+app.post('/api/webhook/send', requireAuth, async (req, res) => {
   try {
     const { endpoint, url, message } = req.body;
     if (!message) return res.status(400).json({ error: 'Campo "message" é obrigatório' });
@@ -431,7 +486,7 @@ app.post('/api/webhook/send', async (req, res) => {
 });
 
 // Registrar endpoint em runtime
-app.post('/api/webhook/endpoints', (req, res) => {
+app.post('/api/webhook/endpoints', requireAuth, (req, res) => {
   try {
     const { name, url, headers, format, method } = req.body;
     if (!name || !url) return res.status(400).json({ error: 'Campos "name" e "url" são obrigatórios' });
@@ -450,7 +505,7 @@ app.get('/api/webhook/endpoints', (_req, res) => {
   res.json({ endpoints: webhook.listEndpoints() });
 });
 
-app.delete('/api/webhook/endpoints/:name', (req, res) => {
+app.delete('/api/webhook/endpoints/:name', requireAuth, (req, res) => {
   webhook.removeEndpoint(req.params.name);
   res.json({ ok: true, endpoints: webhook.listEndpoints() });
 });
@@ -481,7 +536,7 @@ app.get('/api/mesh/peers', (_req, res) => {
 });
 
 // Força discovery agora
-app.post('/api/mesh/discover', async (_req, res) => {
+app.post('/api/mesh/discover', requireAuth, async (_req, res) => {
   try {
     const peers = await mesh.discover();
     res.json({ ok: true, found: peers.length, registry: mesh.registry.toJSON() });
@@ -491,7 +546,7 @@ app.post('/api/mesh/discover', async (_req, res) => {
 });
 
 // Ping um peer específico
-app.post('/api/mesh/ping/:nodeId', async (req, res) => {
+app.post('/api/mesh/ping/:nodeId', requireAuth, async (req, res) => {
   try {
     const start = Date.now();
     const result = await mesh.pingPeer(req.params.nodeId);
@@ -502,7 +557,7 @@ app.post('/api/mesh/ping/:nodeId', async (req, res) => {
 });
 
 // Enviar mensagem para um peer
-app.post('/api/mesh/send/:nodeId', async (req, res) => {
+app.post('/api/mesh/send/:nodeId', requireAuth, async (req, res) => {
   try {
     const { message } = req.body;
     if (!message) return res.status(400).json({ error: 'Campo "message" é obrigatório' });
@@ -514,7 +569,7 @@ app.post('/api/mesh/send/:nodeId', async (req, res) => {
 });
 
 // Heartbeat manual (pinga todos os peers)
-app.post('/api/mesh/heartbeat', async (_req, res) => {
+app.post('/api/mesh/heartbeat', requireAuth, async (_req, res) => {
   try {
     const results = await mesh.heartbeatAll();
     res.json({ ok: true, results });
@@ -524,7 +579,7 @@ app.post('/api/mesh/heartbeat', async (_req, res) => {
 });
 
 // Proxy genérico MCP
-app.post('/api/mcp/:tool', async (req, res) => {
+app.post('/api/mcp/:tool', requireAuth, async (req, res) => {
   try {
     const data = await callMcpTool(req.params.tool, req.body, req);
     res.json(data);
@@ -604,7 +659,7 @@ app.post('/api/services/heartbeat', (req, res) => {
 });
 
 // Remover nó do registry
-app.delete('/api/services/:nodeId', (req, res) => {
+app.delete('/api/services/:nodeId', requireAuth, (req, res) => {
   serviceRegistry.delete(req.params.nodeId);
   res.json({ ok: true });
 });
@@ -720,7 +775,7 @@ app.post('/api/deploy/webhook', express.raw({ type: '*/*' }), async (req, res) =
 });
 
 // Deploy manual (trigger via API)
-app.post('/api/deploy/trigger', async (req, res) => {
+app.post('/api/deploy/trigger', requireAuth, async (req, res) => {
   const { execFile } = require('child_process');
   const deployScript = require('path').join(__dirname, 'deploy.sh');
 
@@ -745,7 +800,7 @@ app.get('/api/deploy/log', (_req, res) => {
 });
 
 // Deploy remoto via run_command (para deployar no Android)
-app.post('/api/deploy/remote', async (req, res) => {
+app.post('/api/deploy/remote', requireAuth, async (req, res) => {
   try {
     const { target, commands } = req.body;
     if (!commands || !Array.isArray(commands)) {
