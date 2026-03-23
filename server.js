@@ -14,6 +14,8 @@ const Ledger = require('./lib/ledger/ledger');
 const receiptLib = require('./lib/ledger/receipt');
 const createLocalTools = require('./lib/local-tools');
 const capabilitiesLib = require('./lib/capabilities');
+const platformDetector = require('./lib/platform-detector');
+const DataSourceRegistry = require('./lib/data-sources');
 const { requireScope, resolveScopes } = require('./lib/middleware/scope-guard');
 const { tokenFederation, introspectHandler } = require('./lib/middleware/token-federation');
 const { InfraScanner } = require('./lib/infra/scanner');
@@ -926,8 +928,17 @@ app.get('/api/network/federation', (_req, res) => {
 
 // ─── Capabilities Routes (Sprint 3) ───────────────────────────────────
 
-// Capabilities deste nó (configuráveis via env ou hardcoded para v0.4.0)
-const NODE_CAPABILITIES = (process.env.NODE_CAPABILITIES || 'chat,monitoring,deploy,relay,whatsapp,telegram,email,calendar').split(',').map(s => s.trim()).filter(Boolean);
+// Capabilities deste nó (env + auto-detecção de plataforma)
+const platformInfo = platformDetector.detect();
+const dataSourceRegistry = new DataSourceRegistry(platformInfo);
+const NODE_CAPABILITIES = [...new Set([
+  ...(process.env.NODE_CAPABILITIES || 'chat,monitoring,deploy,relay').split(',').map(s => s.trim()),
+  ...platformInfo.tools,
+  ...platformInfo.dataSources.map(ds => ds.name),
+])].filter(Boolean);
+
+// Injeta info de plataforma no mesh para ANNOUNCE
+mesh.setPlatformInfo(platformInfo, dataSourceRegistry);
 
 // GET /api/infra — público, sem auth. O que este nó oferece em infra.
 app.get('/api/infra', (_req, res) => {
@@ -978,6 +989,95 @@ app.get('/api/capabilities', (_req, res) => {
     known: capabilitiesLib.KNOWN_CAPABILITIES,
     scopes: capabilitiesLib.DATA_SCOPES,
   });
+});
+
+// ─── Platform & Data Sources Routes ──────────────────────────────────
+
+// GET /api/platform — info da plataforma detectada neste nó
+app.get('/api/platform', (_req, res) => {
+  res.json({
+    nodeId: protocol.NODE_ID,
+    nodeName: protocol.NODE_NAME,
+    ...platformInfo,
+    capabilities: NODE_CAPABILITIES,
+  });
+});
+
+// GET /api/data-sources — fontes de dados disponíveis neste nó e na rede
+app.get('/api/data-sources', (_req, res) => {
+  res.json({
+    nodeId: protocol.NODE_ID,
+    nodeName: protocol.NODE_NAME,
+    local: dataSourceRegistry.toJSON(),
+    network: mesh.registry.online().map(p => ({
+      nodeId: p.nodeId,
+      name: p.name,
+      platform: p.platform,
+      dataSources: p.dataSources || [],
+    })).filter(p => p.dataSources.length > 0),
+  });
+});
+
+// GET /api/data-sources/:name — quem oferece um data source específico na rede
+app.get('/api/data-sources/:name', (_req, res) => {
+  const name = _req.params.name;
+  const localSource = dataSourceRegistry.get(name);
+  const networkPeers = mesh.registry.list({ dataSource: name });
+
+  res.json({
+    source: name,
+    local: localSource || null,
+    network: networkPeers.map(p => ({
+      nodeId: p.nodeId,
+      name: p.name,
+      platform: p.platform,
+      status: p.status,
+    })),
+    totalProviders: (localSource ? 1 : 0) + networkPeers.length,
+  });
+});
+
+// GET /api/network/route/:intent — roteamento inteligente por intent
+app.get('/api/network/route/:intent', (_req, res) => {
+  const intent = _req.params.intent;
+  const result = mesh.querySmartRoute(intent);
+
+  res.json({
+    intent,
+    ...result,
+    localPlatform: platformInfo.platform,
+    localHas: NODE_CAPABILITIES.includes(intent) || dataSourceRegistry.has(intent),
+  });
+});
+
+// GET /api/network/platforms — visão de todas as plataformas na rede
+app.get('/api/network/platforms', (_req, res) => {
+  const peers = mesh.registry.online();
+  const platforms = {};
+
+  for (const p of peers) {
+    const plat = p.platform || 'unknown';
+    if (!platforms[plat]) platforms[plat] = [];
+    platforms[plat].push({
+      nodeId: p.nodeId,
+      name: p.name,
+      capabilities: p.capabilities,
+      dataSources: p.dataSources,
+    });
+  }
+
+  // Inclui este nó
+  const selfPlat = platformInfo.platform;
+  if (!platforms[selfPlat]) platforms[selfPlat] = [];
+  platforms[selfPlat].unshift({
+    nodeId: protocol.NODE_ID,
+    name: protocol.NODE_NAME,
+    capabilities: NODE_CAPABILITIES,
+    dataSources: dataSourceRegistry.toAnnounce(),
+    self: true,
+  });
+
+  res.json({ platforms });
 });
 
 // ─── Local MCP Tools Routes ───────────────────────────────────────────
