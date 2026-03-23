@@ -269,38 +269,111 @@ interface LedgerEntry {
 
 ---
 
-## 4. Nó de Testes (Canary Node)
+## 4. Nó de Testes (Canary Node) — A Rede Decide
 
 ### Conceito
 
-Um nó dedicado a testar novas versões do Tulipa antes de fazer deploy no hub principal. O fluxo:
+Não é um nó fixo dedicado. A **rede decide** qual nó roda os testes, baseado em:
+- Disponibilidade de recursos (CPU, RAM, disco)
+- Trust score do nó
+- Proximidade ao hub (latência)
+- Capacidade de provisionar containers (Proxmox)
+
+### Infraestrutura Disponível
+
+**Proxmox VE** (já configurado no Tulipa):
+- **Host:** 192.168.191.207:8006 (nó `n97`)
+- **Auth:** API token `root@pam!tulipa` (já salvo em `~/.tulipa/proxmox.json`)
+- **Capacidades:** LXC containers, VMs, storage management, backup
+- **Status atual:** Offline (precisa estar na mesma rede do Hub)
+- **Código:** `gateway/src/handlers/proxmox.ts` — client completo com create/start/stop/delete container
+
+### Como a Rede Decide (Scheduler Autônomo)
 
 ```
-Developer (push) → GitHub main
-                      ↓
-              Canary Node (auto-pull)
-                      ↓
-              Roda testes + health check
-                      ↓
-              Se OK → notifica owner
-                      ↓
-              Owner aprova → deploy no Hub
+Push no GitHub
+      ↓
+Hub recebe webhook (ou polling)
+      ↓
+Hub cria task: { skill: "canary-test", request: "testar v0.4.1" }
+      ↓
+Task Engine busca: quem pode rodar isso?
+      ↓
+queryBySkill("canary-test") + queryBySkill("compute")
+      ↓
+Ranking por: trust × capacidade × disponibilidade
+      ↓
+Opção 1: Proxmox → cria LXC container efêmero → instala Tulipa → roda testes → destrói
+Opção 2: Peer com compute → delega task → peer roda e reporta
+Opção 3: Hub roda localmente (fallback)
+      ↓
+Resultado: { success: true, tests: 163/163, commit: "abc123" }
+      ↓
+Se OK → Hub auto-deploy (ou notifica owner para aprovar)
+Se falha → rollback no canary, Hub não é afetado
 ```
 
-### Como implementar
+### Container Efêmero no Proxmox (preferido)
 
-**Opção A: Nó Linux/VPS separado**
-- Provisionar via `provision_node` (já existe no MCP)
-- Configurar como child do Hub com `relation: "child"`, `nodeType: "compute"`
-- Deploy automático: cron ou webhook que faz `git pull + build + test`
+A grande vantagem: o canary **não é um nó permanente**. É um container LXC que:
+1. Nasce quando precisa testar
+2. Instala Tulipa do tarball (já existe em `/tulipa-latest.tar.gz`)
+3. Roda `npm test` (163 testes)
+4. Roda health check nos serviços
+5. Reporta resultado ao Hub
+6. Se destrói
 
-**Opção B: Container no mesmo device**
-- proot/chroot no Termux com ambiente isolado
-- Branch `canary` no git — hub roda `main`, canary roda `canary`
+```typescript
+// Novo skill: "canary-test"
+interface CanaryTestConfig {
+  trigger: "webhook" | "polling" | "manual";
+  pollingInterval: number;        // minutos (default: 5)
+  proxmox: {
+    template: string;             // "ubuntu-24.04"
+    cores: number;                // 2
+    memory: number;               // 1024 MB
+    disk: number;                 // 10 GB
+    destroyAfter: boolean;        // true — efêmero
+    keepOnFailure: boolean;       // true — manter para debug
+  };
+  tests: {
+    command: string;              // "npm test"
+    healthCheck: boolean;         // verificar serviços pós-build
+    timeout: number;              // 300000 ms
+  };
+  promotion: {
+    autoPromote: boolean;         // false — requer aprovação
+    notifyVia: "whatsapp" | "mcp";
+    approvalTimeout: number;      // 3600000 ms (1h)
+  };
+}
+```
 
-**Opção C: Segundo device Android**
-- Instalar Tulipa num celular antigo
-- Peering com hub, role `canary`
+### Fallback: Delegação para Peers
+
+Se Proxmox estiver offline (como agora), o Hub pode delegar para qualquer peer com skill `compute`:
+
+```
+Hub → queryBySkill("compute") → Peer X (VPS com Docker)
+    → delegate({ request: "git clone, npm install, npm test" })
+    → Peer X reporta resultado
+```
+
+O TaskRunner já faz isso (`task-runner.ts:executeStep`):
+- Verifica se skill é local → se não, busca peer
+- Delega via `TaskDelegation.delegate()`
+- Se falha, tenta proxy
+- Atualiza reputação do peer (+1 sucesso, -5 falha)
+
+### Quem pode ser canary?
+
+Qualquer nó da rede que tenha:
+1. `capability: ["compute"]` ou `capability: ["canary"]`
+2. Trust score ≥ 0.5
+3. Recursos suficientes (detectados via `system-status`)
+4. Permissão `canRedelegate: true` (para receber tasks do Hub)
+
+A rede cresce → mais nós com compute → mais opções de canary → mais resiliência.
 
 ### Configuração do Canary
 
