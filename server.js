@@ -18,6 +18,7 @@ const { requireScope, resolveScopes } = require('./lib/middleware/scope-guard');
 const { InfraScanner } = require('./lib/infra/scanner');
 const InfraAdopter = require('./lib/infra/adopt');
 const SSHTaskRunner = require('./lib/infra/ssh-task');
+const { CanaryRunner } = require('./lib/infra/canary');
 
 const app = express();
 
@@ -192,6 +193,19 @@ infraScanner.on('discovered', (svc) => {
 });
 infraAdopter.on('adopted', ({ nodeId, type, endpoint }) => {
   console.log(`[infra] Adotado: ${type} como ${nodeId} (${endpoint})`);
+});
+
+const canary = new CanaryRunner({
+  mesh,
+  ledger,
+  ownerNode: process.env.OWNER_NODE || null,
+  notify: async (nodeId, message) => {
+    console.log(`[canary] Notificação: ${message}`);
+    // Se WhatsApp configurado, enviar alerta
+    if (process.env.ALERT_PHONE) {
+      try { await callMcpTool('send_whatsapp', { to: process.env.ALERT_PHONE, message }); } catch {}
+    }
+  },
 });
 
 // ─── Scope Resolution (popula req.grantedScopes) ─────────────────────
@@ -944,6 +958,51 @@ app.post('/api/infra/ssh/:nodeId', requireAuth, async (req, res) => {
     }
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Canary Routes (Sprint 5) ─────────────────────────────────────────
+
+// Iniciar canary test
+app.post('/api/canary/start', requireAuth, async (req, res) => {
+  const { version, repo, branch, testCommands, preferNode } = req.body;
+  if (!version || !repo) {
+    return res.status(400).json({ error: 'Campos "version" e "repo" são obrigatórios' });
+  }
+
+  try {
+    const run = await canary.start({ version, repo, branch, testCommands, preferNode });
+    res.json(run);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Status de um canary run
+app.get('/api/canary/:runId', requireAuth, (req, res) => {
+  const run = canary.getRun(req.params.runId);
+  if (!run) return res.status(404).json({ error: 'Run não encontrado' });
+  res.json(run);
+});
+
+// Listar canary runs
+app.get('/api/canary', requireAuth, (req, res) => {
+  const runs = canary.listRuns({ state: req.query.state, version: req.query.version });
+  res.json({ runs });
+});
+
+// Aprovar ou rejeitar promoção
+app.post('/api/canary/:runId/approve', requireAuth, (req, res) => {
+  const { approved, reason } = req.body;
+  if (typeof approved !== 'boolean') {
+    return res.status(400).json({ error: 'Campo "approved" (boolean) é obrigatório' });
+  }
+
+  try {
+    const run = canary.approve(req.params.runId, approved, reason);
+    res.json(run);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 
