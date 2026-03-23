@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tulipa Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --yellow: #d29922; --red: #f85149;
+    --purple: #bc8cff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); padding: 20px;
+    max-width: 1400px; margin: 0 auto;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  h1 span { color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 20px; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 16px; margin-bottom: 20px;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; position: relative;
+  }
+  .card h2 {
+    font-size: 0.9rem; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 12px; display: flex;
+    align-items: center; gap: 8px;
+  }
+  .card h2 .dot {
+    width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+  }
+  .dot.green { background: var(--green); }
+  .dot.yellow { background: var(--yellow); }
+  .dot.red { background: var(--red); }
+  .dot.gray { background: var(--muted); }
+  .stat-row {
+    display: flex; justify-content: space-between; padding: 6px 0;
+    border-bottom: 1px solid var(--border); font-size: 0.875rem;
+  }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-label { color: var(--muted); }
+  .stat-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat-value.green { color: var(--green); }
+  .stat-value.yellow { color: var(--yellow); }
+  .stat-value.red { color: var(--red); }
+
+  .transport-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .transport-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 20px; padding: 6px 14px; font-size: 0.8rem;
+  }
+  .transport-chip .name { font-weight: 600; }
+  .transport-chip .priority { color: var(--muted); font-size: 0.7rem; }
+
+  .peer-list { max-height: 300px; overflow-y: auto; }
+  .peer-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px; border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+  }
+  .peer-item:last-child { border-bottom: none; }
+  .peer-name { font-weight: 600; flex: 1; }
+  .peer-channels { display: flex; gap: 4px; }
+  .peer-channels span {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 2px 6px; font-size: 0.7rem;
+  }
+  .latency { color: var(--muted); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+
+  .log-area {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px; font-family: monospace;
+    font-size: 0.78rem; max-height: 200px; overflow-y: auto;
+    line-height: 1.6; color: var(--muted);
+  }
+  .log-area .log-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .log-area .log-time { color: var(--accent); }
+
+  .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .btn {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;
+    transition: border-color 0.2s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn:active { background: var(--border); }
+  .btn.primary { border-color: var(--accent); color: var(--accent); }
+
+  .queue-bar {
+    height: 6px; background: var(--border); border-radius: 3px;
+    margin: 8px 0; overflow: hidden;
+  }
+  .queue-bar .fill {
+    height: 100%; border-radius: 3px; transition: width 0.5s;
+  }
+
+  .refresh-info {
+    text-align: center; color: var(--muted); font-size: 0.75rem;
+    padding: 10px; border-top: 1px solid var(--border); margin-top: 10px;
+  }
+
+  .webhook-endpoints { font-size: 0.82rem; }
+  .webhook-endpoints .ep {
+    padding: 4px 0; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between;
+  }
+  .webhook-endpoints .ep:last-child { border-bottom: none; }
+  .ep-name { font-weight: 600; }
+  .ep-format { color: var(--purple); font-size: 0.75rem; }
+
+  @media (max-width: 768px) {
+    .grid { grid-template-columns: 1fr; }
+    body { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<h1><span>Tulipa</span> Dashboard</h1>
+<p class="subtitle" id="node-info">Carregando...</p>
+
+<div class="grid">
+  <!-- Monitor -->
+  <div class="card" id="card-monitor">
+    <h2><span class="dot gray" id="monitor-dot"></span> Monitor</h2>
+    <div id="monitor-stats"></div>
+  </div>
+
+  <!-- Transport Layer -->
+  <div class="card">
+    <h2>Transports</h2>
+    <div class="transport-grid" id="transport-list"></div>
+    <div class="actions">
+      <button class="btn" onclick="healthCheck()">Health Check</button>
+    </div>
+  </div>
+
+  <!-- Queue -->
+  <div class="card">
+    <h2>Queue</h2>
+    <div id="queue-stats"></div>
+    <div class="queue-bar"><div class="fill" id="queue-bar-fill"></div></div>
+  </div>
+
+  <!-- Mesh -->
+  <div class="card">
+    <h2><span class="dot gray" id="mesh-dot"></span> Mesh</h2>
+    <div id="mesh-stats"></div>
+    <div class="peer-list" id="peer-list"></div>
+    <div class="actions">
+      <button class="btn" onclick="meshDiscover()">Discover</button>
+      <button class="btn" onclick="meshHeartbeat()">Heartbeat</button>
+    </div>
+  </div>
+
+  <!-- Webhooks -->
+  <div class="card">
+    <h2>Webhooks</h2>
+    <div class="webhook-endpoints" id="webhook-list"></div>
+    <div class="actions">
+      <button class="btn primary" onclick="addWebhookPrompt()">+ Endpoint</button>
+    </div>
+  </div>
+
+  <!-- Services -->
+  <div class="card">
+    <h2><span class="dot gray" id="services-dot"></span> Serviços da Rede</h2>
+    <div id="services-list"></div>
+    <div id="services-stats" style="margin-top:8px"></div>
+  </div>
+
+  <!-- Deploy -->
+  <div class="card">
+    <h2>Deploy</h2>
+    <div id="deploy-log-area" class="log-area" style="max-height:150px;margin-bottom:8px"></div>
+    <div class="actions">
+      <button class="btn primary" onclick="triggerDeploy()">Deploy Manual</button>
+    </div>
+  </div>
+
+  <!-- Send Message -->
+  <div class="card">
+    <h2>Enviar Mensagem</h2>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <input id="send-dest" placeholder="Destino (telefone, chatId, email...)"
+        style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;font-size:0.85rem">
+      <textarea id="send-msg" rows="3" placeholder="Mensagem..."
+        style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;font-size:0.85rem;resize:vertical"></textarea>
+      <select id="send-channel"
+        style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:6px;font-size:0.85rem">
+        <option value="">Auto (fallback)</option>
+        <option value="whatsapp">WhatsApp</option>
+        <option value="telegram">Telegram</option>
+        <option value="email">Email</option>
+        <option value="webhook">Webhook</option>
+      </select>
+      <button class="btn primary" onclick="sendMessage()">Enviar</button>
+    </div>
+    <div id="send-result" style="margin-top:8px;font-size:0.8rem;color:var(--muted)"></div>
+  </div>
+</div>
+
+<!-- Event Log -->
+<div class="card">
+  <h2>Log</h2>
+  <div class="log-area" id="log-area"></div>
+</div>
+
+<div class="refresh-info">
+  Auto-refresh: <span id="refresh-countdown">10</span>s
+  | <button class="btn" onclick="refresh()" style="display:inline;padding:2px 8px">Atualizar agora</button>
+  | <button class="btn" onclick="setToken()" style="display:inline;padding:2px 8px" id="auth-btn">Autenticar</button>
+  <span id="auth-status" style="margin-left:6px;font-size:0.7rem"></span>
+</div>
+
+<script>
+const BASE = window.location.origin;
+const logs = [];
+let countdown = 10;
+let authToken = localStorage.getItem('tulipa_token') || '';
+
+function setToken() {
+  const t = prompt('Token de acesso (Bearer token):');
+  if (t !== null) {
+    authToken = t.trim();
+    if (authToken) {
+      localStorage.setItem('tulipa_token', authToken);
+      document.getElementById('auth-status').textContent = 'autenticado';
+      document.getElementById('auth-status').style.color = 'var(--green)';
+      log('Token configurado');
+    } else {
+      localStorage.removeItem('tulipa_token');
+      document.getElementById('auth-status').textContent = '';
+    }
+  }
+}
+
+if (authToken) {
+  document.getElementById('auth-status').textContent = 'autenticado';
+  document.getElementById('auth-status').style.color = 'var(--green)';
+}
+
+function log(msg) {
+  const time = new Date().toLocaleTimeString('pt-BR');
+  logs.unshift({ time, msg });
+  if (logs.length > 50) logs.pop();
+  renderLogs();
+}
+
+function renderLogs() {
+  const el = document.getElementById('log-area');
+  el.innerHTML = logs.map(l =>
+    `<div class="log-line"><span class="log-time">${l.time}</span> ${l.msg}</div>`
+  ).join('');
+}
+
+function dotColor(status) {
+  if (status === 'ok' || status === 'online' || status === true) return 'green';
+  if (status === 'degraded' || status === 'stale') return 'yellow';
+  return 'red';
+}
+
+async function api(path, opts = {}) {
+  try {
+    if (authToken) {
+      opts.headers = { ...opts.headers, 'Authorization': `Bearer ${authToken}` };
+    }
+    const res = await fetch(BASE + path, opts);
+    if (res.status === 401) {
+      document.getElementById('auth-status').textContent = 'token inválido';
+      document.getElementById('auth-status').style.color = 'var(--red)';
+    }
+    return await res.json();
+  } catch (err) {
+    log(`Erro: ${path} — ${err.message}`);
+    return null;
+  }
+}
+
+async function loadMonitor() {
+  const data = await api('/api/monitor');
+  if (!data) return;
+  const m = data.monitor;
+  const dot = document.getElementById('monitor-dot');
+  dot.className = `dot ${dotColor(m.status)}`;
+
+  document.getElementById('monitor-stats').innerHTML = `
+    <div class="stat-row"><span class="stat-label">Status</span><span class="stat-value ${dotColor(m.status)}">${m.status}</span></div>
+    <div class="stat-row"><span class="stat-label">Response Time</span><span class="stat-value">${m.responseTime ? m.responseTime + 'ms' : '—'}</span></div>
+    <div class="stat-row"><span class="stat-label">Last Check</span><span class="stat-value">${m.lastCheck ? new Date(m.lastCheck).toLocaleTimeString('pt-BR') : '—'}</span></div>
+    <div class="stat-row"><span class="stat-label">Falhas Consecutivas</span><span class="stat-value ${m.consecutiveFailures > 0 ? 'red' : ''}">${m.consecutiveFailures}</span></div>
+    <div class="stat-row"><span class="stat-label">Alerta Enviado</span><span class="stat-value">${m.alertSent ? 'Sim' : 'Nao'}</span></div>
+  `;
+}
+
+async function loadTransports() {
+  const data = await api('/api/transport');
+  if (!data) return;
+  const el = document.getElementById('transport-list');
+  const transports = Object.values(data.transports || {});
+
+  el.innerHTML = transports.map(t => `
+    <div class="transport-chip">
+      <span class="dot ${t.available ? 'green' : 'gray'}"></span>
+      <span class="name">${t.name}</span>
+      <span class="priority">p${t.priority}</span>
+      <span style="color:var(--muted);font-size:0.7rem">${t.stats.sent}/${t.stats.errors}</span>
+    </div>
+  `).join('') || '<span style="color:var(--muted);font-size:0.85rem">Nenhum</span>';
+}
+
+async function loadQueue() {
+  const data = await api('/api/queue');
+  if (!data) return;
+  const s = data.stats;
+  const total = s.pending + s.delivered + s.failed;
+  const pct = total > 0 ? (s.delivered / total * 100) : 100;
+
+  document.getElementById('queue-stats').innerHTML = `
+    <div class="stat-row"><span class="stat-label">Pendentes</span><span class="stat-value ${s.pending > 0 ? 'yellow' : ''}">${s.pending}</span></div>
+    <div class="stat-row"><span class="stat-label">Entregues</span><span class="stat-value green">${s.delivered}</span></div>
+    <div class="stat-row"><span class="stat-label">Falharam</span><span class="stat-value ${s.failed > 0 ? 'red' : ''}">${s.failed}</span></div>
+  `;
+
+  const fill = document.getElementById('queue-bar-fill');
+  fill.style.width = pct + '%';
+  fill.style.background = s.pending > 0 ? 'var(--yellow)' : 'var(--green)';
+}
+
+async function loadMesh() {
+  const data = await api('/api/mesh');
+  if (!data) return;
+
+  const dot = document.getElementById('mesh-dot');
+  dot.className = `dot ${data.running ? 'green' : 'gray'}`;
+
+  document.getElementById('mesh-stats').innerHTML = `
+    <div class="stat-row"><span class="stat-label">Node</span><span class="stat-value">${data.nodeName}</span></div>
+    <div class="stat-row"><span class="stat-label">ID</span><span class="stat-value" style="font-size:0.75rem">${data.nodeId}</span></div>
+    <div class="stat-row"><span class="stat-label">Peers Online</span><span class="stat-value green">${data.registry.online}</span></div>
+    <div class="stat-row"><span class="stat-label">Total Peers</span><span class="stat-value">${data.registry.count}</span></div>
+  `;
+
+  const list = document.getElementById('peer-list');
+  const peers = data.registry.peers || [];
+  list.innerHTML = peers.map(p => `
+    <div class="peer-item">
+      <span class="dot ${dotColor(p.status)}"></span>
+      <span class="peer-name">${p.name}</span>
+      <span class="latency">${p.latency ? p.latency + 'ms' : ''}</span>
+      <div class="peer-channels">
+        ${p.channels.map(c => `<span>${c}</span>`).join('')}
+      </div>
+    </div>
+  `).join('') || '<div style="color:var(--muted);font-size:0.85rem;padding:8px">Nenhum peer descoberto</div>';
+}
+
+async function loadWebhooks() {
+  const data = await api('/api/webhook/endpoints');
+  if (!data) return;
+  const el = document.getElementById('webhook-list');
+  const eps = Object.entries(data.endpoints || {});
+
+  el.innerHTML = eps.map(([name, ep]) => `
+    <div class="ep">
+      <span><span class="ep-name">${name}</span> <span class="ep-format">${ep.format}</span></span>
+      <span style="color:var(--muted);font-size:0.75rem">${ep.method}</span>
+    </div>
+  `).join('') || '<span style="color:var(--muted);font-size:0.85rem">Nenhum endpoint</span>';
+}
+
+async function loadServices() {
+  const data = await api('/api/services');
+  if (!data) return;
+  const dot = document.getElementById('services-dot');
+  const online = data.services.filter(s => s.status === 'online').length;
+  dot.className = `dot ${online > 0 ? 'green' : 'gray'}`;
+
+  const el = document.getElementById('services-list');
+  el.innerHTML = data.services.map(s => `
+    <div class="peer-item">
+      <span class="dot ${dotColor(s.status)}"></span>
+      <span class="peer-name">${s.name}</span>
+      <span style="color:var(--muted);font-size:0.75rem">${s.nodeName}</span>
+      <span style="color:var(--purple);font-size:0.75rem">${s.type || ''}</span>
+    </div>
+  `).join('') || '<div style="color:var(--muted);font-size:0.85rem;padding:8px">Nenhum serviço registrado</div>';
+
+  document.getElementById('services-stats').innerHTML = `
+    <div class="stat-row"><span class="stat-label">Nós</span><span class="stat-value">${data.nodes}</span></div>
+    <div class="stat-row"><span class="stat-label">Serviços Online</span><span class="stat-value green">${online}</span></div>
+  `;
+}
+
+async function loadDeployLog() {
+  const data = await api('/api/deploy/log');
+  if (!data) return;
+  const el = document.getElementById('deploy-log-area');
+  el.innerHTML = (data.log || []).slice(0, 10).map(e => `
+    <div class="log-line"><span class="log-time">${new Date(e.timestamp).toLocaleTimeString('pt-BR')}</span> [${e.type}] ${e.message}</div>
+  `).join('') || '<div style="color:var(--muted)">Nenhum deploy registrado</div>';
+}
+
+async function triggerDeploy() {
+  if (!confirm('Iniciar deploy manual?')) return;
+  log('Deploy manual iniciado...');
+  const data = await api('/api/deploy/trigger', { method: 'POST' });
+  if (data?.ok) {
+    log('Deploy iniciado com sucesso');
+  } else {
+    log('Falha ao iniciar deploy');
+  }
+  setTimeout(loadDeployLog, 3000);
+}
+
+async function loadNodeInfo() {
+  const data = await api('/api/mesh');
+  if (data) {
+    document.getElementById('node-info').textContent =
+      `${data.nodeName} (${data.nodeId}) | ${Object.keys((await api('/api/transport'))?.transports || {}).length} canais`;
+  }
+}
+
+async function refresh() {
+  countdown = 10;
+  await Promise.all([
+    loadMonitor(),
+    loadTransports(),
+    loadQueue(),
+    loadMesh(),
+    loadWebhooks(),
+    loadServices(),
+    loadDeployLog(),
+  ]);
+}
+
+async function healthCheck() {
+  log('Executando health check...');
+  const data = await api('/api/transport/health');
+  if (data) {
+    for (const [name, result] of Object.entries(data)) {
+      log(`${name}: ${result.ok ? 'OK' : 'FALHA — ' + result.error}`);
+    }
+  }
+  await loadTransports();
+}
+
+async function meshDiscover() {
+  log('Executando mesh discover...');
+  const data = await api('/api/mesh/discover', { method: 'POST' });
+  if (data) {
+    log(`Discovery: ${data.found} peers encontrados`);
+  }
+  await loadMesh();
+}
+
+async function meshHeartbeat() {
+  log('Executando heartbeat...');
+  const data = await api('/api/mesh/heartbeat', { method: 'POST' });
+  if (data?.results) {
+    for (const r of data.results) {
+      log(`Ping ${r.nodeId}: ${r.ok ? r.latency + 'ms' : 'FALHA'}`);
+    }
+  }
+  await loadMesh();
+}
+
+async function sendMessage() {
+  const dest = document.getElementById('send-dest').value.trim();
+  const msg = document.getElementById('send-msg').value.trim();
+  const channel = document.getElementById('send-channel').value;
+  const resultEl = document.getElementById('send-result');
+
+  if (!dest || !msg) {
+    resultEl.textContent = 'Preencha destino e mensagem';
+    resultEl.style.color = 'var(--red)';
+    return;
+  }
+
+  resultEl.textContent = 'Enviando...';
+  resultEl.style.color = 'var(--muted)';
+
+  const body = { destination: dest, message: msg };
+  if (channel) body.channel = channel;
+
+  const data = await api('/api/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (data?.ok) {
+    resultEl.textContent = `Enviado via ${data.channel}`;
+    resultEl.style.color = 'var(--green)';
+    log(`Mensagem enviada para ${dest} via ${data.channel}`);
+    document.getElementById('send-msg').value = '';
+  } else if (data?.queued) {
+    resultEl.textContent = `Enfileirado (${data.id})`;
+    resultEl.style.color = 'var(--yellow)';
+    log(`Mensagem enfileirada para ${dest}`);
+  } else {
+    resultEl.textContent = `Falha: ${JSON.stringify(data?.errors || data)}`;
+    resultEl.style.color = 'var(--red)';
+  }
+  await loadQueue();
+}
+
+function addWebhookPrompt() {
+  const name = prompt('Nome do endpoint (ex: slack, discord, n8n):');
+  if (!name) return;
+  const url = prompt('URL do webhook:');
+  if (!url) return;
+  const format = prompt('Formato (json, slack, discord, text):', 'json');
+
+  api('/api/webhook/endpoints', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, url, format }),
+  }).then(data => {
+    if (data?.ok) {
+      log(`Webhook "${name}" adicionado`);
+      loadWebhooks();
+    }
+  });
+}
+
+// Init
+loadNodeInfo();
+refresh();
+log('Dashboard iniciado');
+
+// Auto-refresh
+setInterval(() => {
+  countdown--;
+  document.getElementById('refresh-countdown').textContent = countdown;
+  if (countdown <= 0) refresh();
+}, 1000);
+</script>
+</body>
+</html>
