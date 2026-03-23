@@ -15,6 +15,7 @@ const receiptLib = require('./lib/ledger/receipt');
 const createLocalTools = require('./lib/local-tools');
 const capabilitiesLib = require('./lib/capabilities');
 const { requireScope, resolveScopes } = require('./lib/middleware/scope-guard');
+const { tokenFederation, introspectHandler } = require('./lib/middleware/token-federation');
 const { InfraScanner } = require('./lib/infra/scanner');
 const InfraAdopter = require('./lib/infra/adopt');
 const SSHTaskRunner = require('./lib/infra/ssh-task');
@@ -59,15 +60,23 @@ function getRequestToken(req) {
 }
 
 // Middleware de autenticação — requer Bearer token válido no request
+// Aceita: master token, peer tokens do registry, ou tokens federados via hub
 function requireAuth(req, res, next) {
   const token = getRequestToken(req);
   if (!token) {
     return res.status(401).json({ error: 'Authorization required — envie header Authorization: Bearer <token>' });
   }
-  if (API_TOKEN && token !== API_TOKEN) {
-    return res.status(403).json({ error: 'Token inválido' });
-  }
-  next();
+
+  // Master token = sempre OK
+  if (API_TOKEN && token === API_TOKEN) return next();
+
+  // Token federado (validado pelo middleware tokenFederation)
+  if (req.grantedScopes && req.grantedScopes.length > 0) return next();
+
+  // Se não tem API_TOKEN configurado, aceita qualquer token
+  if (!API_TOKEN) return next();
+
+  return res.status(403).json({ error: 'Token inválido' });
 }
 
 app.use(express.json());
@@ -231,6 +240,18 @@ app.use(resolveScopes({
   resolveToken: getRequestToken,
   masterToken: API_TOKEN,
   mesh,
+}));
+
+// ─── Token Federation (auth federada via hub) ────────────────────────
+// Se token não é local, pergunta ao hub se é válido (com cache)
+app.use(tokenFederation({
+  getRequestToken,
+  masterToken: API_TOKEN,
+  mesh,
+  fetch: proxyFetch,
+  hubEndpoints: process.env.HUB_ENDPOINTS
+    ? process.env.HUB_ENDPOINTS.split(',')
+    : (process.env.GATEWAY_URL ? [process.env.GATEWAY_URL] : []),
 }));
 
 // ─── Local MCP Tools ──────────────────────────────────────────────────
@@ -772,6 +793,13 @@ app.post('/api/network/query', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Token Introspection — peers perguntam se um token é válido aqui
+// Não requer auth (qualquer peer pode perguntar)
+app.post('/api/network/introspect', introspectHandler({
+  masterToken: API_TOKEN,
+  mesh,
+}));
 
 // Relay de task via este hub
 app.post('/api/network/relay', requireAuth, async (req, res) => {
