@@ -588,6 +588,22 @@ app.post('/api/mesh/send/:nodeId', requireAuth, async (req, res) => {
   }
 });
 
+// Registrar ou atualizar endpoint de um peer
+app.post('/api/mesh/peers/:nodeId', (req, res) => {
+  try {
+    const { endpoint, name, capabilities, channels } = req.body;
+    const info = {};
+    if (endpoint) info.endpoint = endpoint;
+    if (name) info.name = name;
+    if (capabilities) info.capabilities = capabilities;
+    if (channels) info.channels = channels;
+    const peer = mesh.registry.upsert(req.params.nodeId, info);
+    res.json({ ok: true, peer });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Receber mensagem de outro peer (endpoint P2P)
 app.post('/api/mesh/incoming', (req, res) => {
   try {
