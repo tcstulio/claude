@@ -13,6 +13,8 @@ const protocol = require('./lib/protocol');
 const Ledger = require('./lib/ledger/ledger');
 const receiptLib = require('./lib/ledger/receipt');
 const createLocalTools = require('./lib/local-tools');
+const capabilitiesLib = require('./lib/capabilities');
+const { requireScope, resolveScopes } = require('./lib/middleware/scope-guard');
 
 const app = express();
 
@@ -169,6 +171,13 @@ const mesh = new MeshManager({
   discoveryInterval: parseInt(process.env.MESH_DISCOVERY_INTERVAL || '120000', 10),
   heartbeatInterval: parseInt(process.env.MESH_HEARTBEAT_INTERVAL || '60000', 10),
 });
+
+// ─── Scope Resolution (popula req.grantedScopes) ─────────────────────
+app.use(resolveScopes({
+  resolveToken,
+  masterToken: API_TOKEN,
+  mesh,
+}));
 
 // ─── Local MCP Tools ──────────────────────────────────────────────────
 const localTools = createLocalTools({ ledger, mesh, protocol });
@@ -652,6 +661,62 @@ app.post('/api/mesh/admin-token/:nodeId', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: 'Falha ao obter admin token', detail: err.message });
   }
+});
+
+// ─── Capabilities Routes (Sprint 3) ───────────────────────────────────
+
+// Capabilities deste nó (configuráveis via env ou hardcoded para v0.4.0)
+const NODE_CAPABILITIES = (process.env.NODE_CAPABILITIES || 'chat,monitoring,deploy,relay,whatsapp,telegram,email,calendar').split(',').map(s => s.trim()).filter(Boolean);
+
+// GET /api/infra — público, sem auth. O que este nó oferece em infra.
+app.get('/api/infra', (_req, res) => {
+  const infra = capabilitiesLib.filterByCategory(NODE_CAPABILITIES, 'infra');
+  res.json({
+    nodeId: protocol.NODE_ID,
+    nodeName: protocol.NODE_NAME,
+    category: 'infra',
+    capabilities: capabilitiesLib.enrich(infra),
+    peers: mesh.registry.online().map(p => ({
+      nodeId: p.nodeId,
+      name: p.name,
+      infra: capabilitiesLib.filterByCategory(p.capabilities, 'infra'),
+    })),
+  });
+});
+
+// GET /api/knowledge — catálogo completo, filtrado por scopes do requester.
+app.get('/api/knowledge', requireAuth, (req, res) => {
+  const scopes = req.grantedScopes || [];
+  const accessible = capabilitiesLib.accessibleCapabilities(NODE_CAPABILITIES, scopes);
+
+  res.json({
+    nodeId: protocol.NODE_ID,
+    nodeName: protocol.NODE_NAME,
+    grantedScopes: scopes,
+    capabilities: capabilitiesLib.enrich(accessible),
+    restricted: NODE_CAPABILITIES.filter(c => !accessible.includes(c)).map(c => ({
+      name: c,
+      category: capabilitiesLib.classify(c),
+      scope: capabilitiesLib.requiredScope(c),
+      reason: 'Scope não autorizado',
+    })),
+    peers: mesh.registry.online().map(p => ({
+      nodeId: p.nodeId,
+      name: p.name,
+      capabilities: capabilitiesLib.enrich(
+        capabilitiesLib.accessibleCapabilities(p.capabilities, scopes)
+      ),
+    })),
+  });
+});
+
+// GET /api/capabilities — classificação de todas as capabilities conhecidas
+app.get('/api/capabilities', (_req, res) => {
+  res.json({
+    node: capabilitiesLib.enrich(NODE_CAPABILITIES),
+    known: capabilitiesLib.KNOWN_CAPABILITIES,
+    scopes: capabilitiesLib.DATA_SCOPES,
+  });
 });
 
 // ─── Local MCP Tools Routes ───────────────────────────────────────────
