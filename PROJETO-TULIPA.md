@@ -427,55 +427,182 @@ canary:
 
 ---
 
-## 5. Plano de Execução
+## 5. Arquitetura de Camadas
 
-### Sprint 1: Canary Node (esta semana)
-- [ ] Provisionar nó canary (VPS ou segundo device)
-- [ ] Adicionar campos `canary` no services.yaml
-- [ ] Implementar auto-deploy com intervalo
-- [ ] Implementar notify via WhatsApp/MCP após deploy
-- [ ] Implementar health check pós-deploy
-- [ ] Testar ciclo completo: push → canary → promote → hub
+A rede Tulipa tem 3 camadas distintas que **não devem se misturar**:
 
-### Sprint 2: Gossip Discovery
-- [ ] Novo endpoint `GET /api/network/peers/public`
-- [ ] Novo MCP tool `discover_network`
-- [ ] BFS crawler com visited set e max hops
-- [ ] Merge de descobertas no hub registry
-- [ ] Config `discoverable: true/false`
+### Camada 1: Infraestrutura (pública)
+
+O que qualquer nó pode oferecer à rede. É **público por natureza** — quem tem, anuncia.
+
+| Recurso | Capability | Exemplo |
+|---------|-----------|---------|
+| CPU/RAM | `compute` | Proxmox LXC, Docker, bare metal |
+| Proxmox VE | `proxmox` | Criar/destruir containers sob demanda |
+| GPU | `gpu-compute` | Inference, rendering |
+| Storage | `storage` | Backup, cache, artefatos |
+| SSH | `ssh-access` | Shell remoto mediado pela rede |
+| Network | `relay`, `proxy` | Túnel, proxy entre nós |
+
+**Princípio:** Nenhum recurso de infra é hardcoded. Um Proxmox, um VPS, um Raspberry Pi — todos entram na rede da mesma forma: instalar Tulipa → detectar capabilities → fazer peering → anunciar ao registry.
+
+**Adoção de um servidor Proxmox:**
+```
+1. Instalar Tulipa no Proxmox (ou num LXC gerenciador dentro dele)
+2. tulipa setup → gera identidade Ed25519
+3. tulipa peer connect <hub-url> → peering com o Hub
+4. detectCapabilities() retorna: ["compute", "proxmox", "ssh-access", "storage"]
+5. Hub registra no registry: "agent_xyz oferece proxmox em endpoint externo"
+6. Qualquer nó da rede que precise de container → rede encontra esse peer
+```
+
+**SSH pela rede:**
+SSH não é exposto diretamente. A rede media:
+```
+Nó A quer shell no Nó B
+  → A envia task { skill: "ssh-access", request: "ls -la /data" }
+  → Rede verifica: A tem permissão? (allowedSkills inclui "ssh-access"?)
+  → B executa localmente e retorna resultado
+  → Gera TaskReceipt assinado por ambos
+```
+
+### Camada 2: Conhecimento Privado
+
+Dados que **pertencem a alguém** e nunca saem do nó sem permissão explícita.
+
+| Dado | dataScope | Quem acessa |
+|------|-----------|-------------|
+| Clientes, agenda, financeiro | `contacts`, `financeiro` | Só o owner |
+| Modelos treinados | `models` | Nó local |
+| Histórico de conversas | `messages` | Owner + peers autorizados |
+| Config de negócio (preços, regras) | `business` | Owner |
+| Credenciais (tokens, senhas) | nunca exposto | Nó local apenas |
+
+**Proteção:** `PeerPermissions.dataScopes` controla o que cada peer pode ler. Default é `[]` — ninguém acessa nada até ser explicitamente permitido.
+
+**Princípio:** Infraestrutura é compartilhável, conhecimento é soberano.
+
+### Camada 3: Economia (troca de valor)
+
+Como serviços são trocados, registrados e recompensados.
+
+#### TaskReceipt — o recibo verificável
+
+Cada transação na rede gera um recibo com hash + dupla assinatura Ed25519:
+
+```typescript
+interface TaskReceipt {
+  // Identificação
+  id: string;                      // "rcpt_" + hash[:16]
+  taskId: string;                  // task original
+
+  // Partes
+  from: string;                    // identityId de quem pediu
+  to: string;                      // identityId de quem executou
+
+  // O que foi feito
+  skill: string;                   // "compute", "proxmox", "chat", etc.
+  description: string;             // resumo da task
+  resultHash: string;              // SHA-256(result) — prova sem expor conteúdo
+
+  // Custo
+  resourceUsed: {
+    cpuSeconds?: number;
+    memoryMB?: number;
+    durationMs: number;
+    diskMB?: number;
+  };
+
+  // Verificação
+  timestamp: string;               // ISO
+  hash: string;                    // SHA-256(from + to + taskId + skill + resultHash + timestamp)
+  fromSignature: string;           // Ed25519(hash, fromPrivKey)
+  toSignature: string;             // Ed25519(hash, toPrivKey)
+}
+```
+
+**O que isso permite:**
+- **Prova de trabalho** — B prova que executou a task pro A, com assinaturas de ambos
+- **Reputation verificável** — não é só um número local, é baseado em receipts assinados
+- **Privacidade** — `resultHash` prova o resultado sem expor os dados
+- **Auditoria** — qualquer nó pode verificar as assinaturas com as public keys
+- **Economia** — receipts viram créditos: "B tem 500 receipts de compute"
+
+#### Ledger Distribuído
+
+Cada nó mantém seu ledger local de receipts:
+
+```
+~/.tulipa/ledger/
+  receipts/          # todos os receipts (from ou to = eu)
+  balance.json       # saldo: { "agent_xyz": +50, "agent_abc": -20 }
+  summary.json       # agregado: total earned, total spent, by skill
+```
+
+**Não é blockchain** — é um ledger bilateral. Cada par de nós tem uma conta-corrente. Se A e B discordam, as assinaturas resolvem quem está certo.
+
+#### Créditos
+
+```
+Novo nó entra → recebe bootstrap credits (ex: 100)
+  → Pode consumir 100 tasks da rede
+  → Ganha créditos executando tasks para outros
+  → Saldo negativo? Taxa de prioridade cai no ranking
+  → Saldo positivo? Prioridade sobe
+
+Ranking de delegação = trust × reputation × saldo
+```
+
+---
+
+## 6. Plano de Execução
+
+### Sprint 1: TaskReceipt + Ledger (prioridade)
+- [ ] Implementar `TaskReceipt` no task-engine
+- [ ] Hash SHA-256 + dupla assinatura Ed25519 (infra já existe em identity.ts)
+- [ ] Ledger local em `~/.tulipa/ledger/`
+- [ ] Gerar receipt ao final de cada task delegada
+- [ ] MCP tool `get_ledger` para consultar saldo
 - [ ] Testes
 
-### Sprint 3: Confiança Transitiva
-- [ ] Campo `transitiveTrust` no HubEntry
-- [ ] Cálculo durante gossip com decay factor
-- [ ] Trust score no ranking de `queryBySkill()`
-- [ ] Threshold mínimo para delegação
+### Sprint 2: Separação Infra vs Conhecimento
+- [ ] Classificar capabilities em `infra` vs `private`
+- [ ] Guard em todas as rotas: verificar `dataScopes` antes de expor dados
+- [ ] Endpoint `GET /api/infra` — o que este nó oferece (público)
+- [ ] Endpoint `GET /api/knowledge` — o que este nó sabe (requer permissão)
 - [ ] Testes
 
-### Sprint 4: Federated Skill Search
-- [ ] Endpoint `POST /api/network/query`
-- [ ] Propagação de queries entre hubs
-- [ ] Relay de tasks via hub intermediário
+### Sprint 3: Adoção de Infra (Proxmox, VPS, SSH)
+- [ ] Fluxo: `tulipa infra adopt <endpoint>` — detecta tipo, faz peering, registra capabilities
+- [ ] Proxmox como peer (não hardcoded) com endpoint externo
+- [ ] SSH mediado pela rede (task-based, não port forwarding)
+- [ ] Auto-discovery de Proxmox via API scan na rede local
+- [ ] Testes
+
+### Sprint 4: Canary Autônomo
+- [ ] Skill `canary-test` no task-engine
+- [ ] Rede decide qual nó roda (Proxmox efêmero preferido)
+- [ ] Container LXC efêmero: cria → testa → destrói
+- [ ] Notificação de resultado via WhatsApp/MCP
+- [ ] Testes
+
+### Sprint 5: Gossip + Confiança Transitiva
+- [ ] `GET /api/network/peers/public` + BFS crawler
+- [ ] Trust transitivo com decay factor
+- [ ] Federated skill search entre hubs
 - [ ] Rate limiting cross-network
 - [ ] Testes
 
-### Sprint 5: Organizações e Multi-owner
-- [ ] Modelo Organization
-- [ ] CLI: `tulipa org create`, `tulipa org invite`
-- [ ] Políticas de governança por org
-- [ ] Reputação cross-hub
-- [ ] Testes
-
-### Sprint 6: Economia de Serviços
-- [ ] Service Ledger
-- [ ] Contabilidade de créditos por task
+### Sprint 6: Economia Completa
 - [ ] Bootstrap credits para novos nós
-- [ ] Dashboard de economia
+- [ ] Ranking de delegação: trust × reputation × saldo
+- [ ] Dashboard de economia (saldo, top contribuidores)
+- [ ] Organizações e multi-owner
 - [ ] Testes
 
 ---
 
-## 6. Resumo Técnico
+## 7. Resumo Técnico
 
 | Métrica | Valor |
 |---------|-------|
@@ -489,9 +616,11 @@ canary:
 | Plataformas | Android, Linux, macOS, Windows |
 | Protocolo de rede | HTTP + Ed25519 + Bearer tokens |
 | Discovery | mDNS (LAN) + Hub Registry (WAN) + QR/NFC (presencial) |
+| Economia | TaskReceipt (SHA-256 + Ed25519 dual-sign) |
+| Camadas | Infraestrutura (pública) · Conhecimento (privado) · Economia (verificável) |
 | Deploy | git pull + tsc, rollback, tarballs SHA256 |
 | Backup | Diário, 7 retenções, WhatsApp auth + contacts + history |
 
 ---
 
-*Documento gerado em 2026-03-23 por análise completa do codebase Tulipa v0.4.0.*
+*Documento atualizado em 2026-03-23 — arquitetura de camadas, economia com TaskReceipt, e separação infra/conhecimento.*
