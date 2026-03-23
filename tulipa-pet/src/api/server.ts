@@ -46,6 +46,13 @@ interface GiftBody {
   needKey: string;
 }
 
+interface PetDaemon {
+  getProcessSnapshot(): Record<string, unknown>;
+  getRestartHistory(): unknown[];
+  getSensorContribution(): unknown;
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+}
+
 interface PetServerResult {
   app: Express;
   server: Server;
@@ -55,7 +62,8 @@ interface PetServerResult {
 export function createPetServer(
   petManager: PetManager,
   port: number = 3333,
-  petNetwork: PetNetwork | null = null
+  petNetwork: PetNetwork | null = null,
+  daemon: PetDaemon | null = null
 ): PetServerResult {
   const app: Express = express();
   const server: Server = createServer(app);
@@ -142,6 +150,33 @@ export function createPetServer(
     }
   });
 
+  // API: Process/service monitoring (from daemon)
+  app.get('/api/processes', (_req: Request, res: Response) => {
+    if (!daemon) {
+      res.status(503).json({ error: 'Daemon not running' });
+      return;
+    }
+    res.json(daemon.getProcessSnapshot());
+  });
+
+  // API: Daemon sensor contribution to pet
+  app.get('/api/daemon/sensors', (_req: Request, res: Response) => {
+    if (!daemon) {
+      res.status(503).json({ error: 'Daemon not running' });
+      return;
+    }
+    res.json(daemon.getSensorContribution());
+  });
+
+  // API: Restart history
+  app.get('/api/daemon/restarts', (_req: Request, res: Response) => {
+    if (!daemon) {
+      res.json([]);
+      return;
+    }
+    res.json(daemon.getRestartHistory());
+  });
+
   // WebSocket: real-time updates
   wss.on('connection', (ws: WebSocket) => {
     // Send initial state
@@ -189,6 +224,18 @@ export function createPetServer(
         if (client.readyState === WebSocket.OPEN) client.send(msg);
       });
     });
+  }
+
+  // Broadcast daemon events (service status changes, restarts)
+  if (daemon) {
+    for (const eventName of ['service-event', 'critical-alert', 'restart-attempt', 'hot-update', 'build-success', 'build-error']) {
+      daemon.on(eventName, (data: unknown) => {
+        const msg = JSON.stringify({ type: `daemon:${eventName}`, data } as WsMessage);
+        wss.clients.forEach((client: WebSocket) => {
+          if (client.readyState === WebSocket.OPEN) client.send(msg);
+        });
+      });
+    }
   }
 
   server.listen(port, () => {
