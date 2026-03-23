@@ -268,18 +268,38 @@ function dotColor(status) {
   return 'red';
 }
 
-async function api(path, opts = {}) {
+let _connectionOk = true;
+
+async function api(path, opts) {
   try {
     if (authToken) {
       opts.headers = { ...opts.headers, 'Authorization': `Bearer ${authToken}` };
     }
     const res = await fetch(BASE + path, opts);
-    if (res.status === 401) {
-      document.getElementById('auth-status').textContent = 'token inválido';
-      document.getElementById('auth-status').style.color = 'var(--red)';
+    const contentType = res.headers.get('content-type') || '';
+
+    // Servidor retornou HTML em vez de JSON (restart, proxy error)
+    if (!contentType.includes('application/json')) {
+      const text = await res.text();
+      if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+        throw new Error('Servidor reiniciando...');
+      }
+      // Tenta parsear mesmo assim (pode ser JSON sem content-type)
+      try { return JSON.parse(text); } catch { throw new Error(`Resposta inesperada (${res.status})`); }
+    }
+
+    if (!_connectionOk) {
+      _connectionOk = true;
+      document.getElementById('node-info').style.color = '';
+      log('Conexão restabelecida');
     }
     return await res.json();
   } catch (err) {
+    if (_connectionOk) {
+      _connectionOk = false;
+      document.getElementById('node-info').textContent = 'Reconectando...';
+      document.getElementById('node-info').style.color = 'var(--yellow)';
+    }
     log(`Erro: ${path} — ${err.message}`);
     return null;
   }

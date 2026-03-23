@@ -43,79 +43,65 @@ function authHeaders(req) {
 app.use(express.json());
 app.use(express.static('public'));
 
-// ─── Rate Limiting ────────────────────────────────────────────────────
-const RATE_LIMIT_WINDOW = 60 * 1000; // 1 min
-const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '60', 10); // 60 req/min
-const rateLimitMap = new Map();
+// ─── Helper: chama MCP tool no gateway (com retry para 502/503) ──────
+let _mcpCallId = 0;
+const MCP_MAX_RETRIES = 3;
+const MCP_RETRY_DELAYS = [2000, 4000, 8000]; // backoff exponencial
 
-function rateLimit(req, res, next) {
-  const ip = req.ip || req.connection.remoteAddress || 'unknown';
-  const now = Date.now();
-  let entry = rateLimitMap.get(ip);
-
-  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW) {
-    entry = { count: 0, windowStart: now };
-    rateLimitMap.set(ip, entry);
-  }
-
-  entry.count++;
-
-  if (entry.count > RATE_LIMIT_MAX) {
-    res.set('Retry-After', Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW - now) / 1000));
-    return res.status(429).json({ error: 'Rate limit excedido', retryAfter: Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW - now) / 1000) });
-  }
-
-  next();
-}
-
-// Limpa IPs antigos a cada 5 min
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of rateLimitMap) {
-    if (now - entry.windowStart > RATE_LIMIT_WINDOW * 2) rateLimitMap.delete(ip);
-  }
-}, 5 * 60 * 1000);
-
-// Rate limit em todas as rotas API
-app.use('/api', rateLimit);
-
-// ─── Autenticação do Dashboard ────────────────────────────────────────
-const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || process.env.TULIPA_TOKEN || '';
-
-function requireAuth(req, res, next) {
-  // Sem token configurado = modo dev (sem auth)
-  if (!DASHBOARD_TOKEN) return next();
-
-  const auth = req.get('authorization') || '';
-  const queryToken = req.query.token;
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : queryToken;
-
-  if (token === DASHBOARD_TOKEN) return next();
-
-  res.status(401).json({ error: 'Token inválido ou ausente', hint: 'Envie Authorization: Bearer <token>' });
-}
-
-// Rotas públicas (sem auth): health, monitor, services GET, dashboard HTML
-// Rotas protegidas: tudo que modifica estado (send, deploy, mcp, etc)
-
-// ─── Helper: chama MCP tool no gateway ─────────────────────────────────
 async function callMcpTool(tool, args = {}, req = null) {
-  const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
-    method: 'POST',
-    headers: authHeaders(req),
-    body: JSON.stringify({ tool, arguments: args }),
-  });
+  let lastError;
 
-  if (!res.ok) {
-    const text = await res.text();
-    const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
-    const detail = isHtml
-      ? `Gateway retornou ${res.status} (servidor MCP offline)`
-      : `Gateway retornou ${res.status}: ${text}`;
-    throw new Error(detail);
+  for (let attempt = 0; attempt <= MCP_MAX_RETRIES; attempt++) {
+    try {
+      const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
+        method: 'POST',
+        headers: authHeaders(req),
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'tools/call',
+          id: ++_mcpCallId,
+          params: { name: tool, arguments: args },
+        }),
+        signal: AbortSignal.timeout(20000),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
+        const detail = isHtml
+          ? `Gateway retornou ${res.status} (servidor MCP offline)`
+          : `Gateway retornou ${res.status}: ${text}`;
+        const err = new Error(detail);
+        err.statusCode = res.status;
+        throw err;
+      }
+
+      const json = await res.json();
+
+      // JSON-RPC 2.0: desembrulha result/error
+      if (json.jsonrpc === '2.0') {
+        if (json.error) {
+          throw new Error(`MCP error ${json.error.code}: ${json.error.message}`);
+        }
+        return json.result;
+      }
+
+      return json;
+
+    } catch (err) {
+      lastError = err;
+      const retryable = err.statusCode === 502 || err.statusCode === 503 || err.code === 'UND_ERR_CONNECT_TIMEOUT' || err.name === 'TimeoutError';
+
+      if (retryable && attempt < MCP_MAX_RETRIES) {
+        const delay = MCP_RETRY_DELAYS[attempt] || 8000;
+        console.log(`[mcp] ${tool} falhou (${err.message}), retry ${attempt + 1}/${MCP_MAX_RETRIES} em ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
   }
-
-  return res.json();
+  throw lastError;
 }
 
 // ─── Inicializa Transport Layer ────────────────────────────────────────
@@ -156,6 +142,7 @@ if (webhook.configured) router.register(webhook);
 const mesh = new MeshManager({
   router,
   callMcpTool,
+  fetch: proxyFetch,
   discoveryInterval: parseInt(process.env.MESH_DISCOVERY_INTERVAL || '120000', 10),
   heartbeatInterval: parseInt(process.env.MESH_HEARTBEAT_INTERVAL || '60000', 10),
 });
@@ -179,20 +166,43 @@ router.on('channel-failed', ({ channel, error }) => {
 });
 
 // ─── Monitor / Watchdog ────────────────────────────────────────────────
+const fs = require('fs');
+const path = require('path');
+
 const MONITOR_INTERVAL = parseInt(process.env.MONITOR_INTERVAL || '120000', 10); // 2 min
 const ALERT_PHONE     = process.env.ALERT_PHONE || '';  // ex: 5511999999999
 const SLOW_THRESHOLD  = parseInt(process.env.SLOW_THRESHOLD || '10000', 10); // 10s
+const MONITOR_STATE_PATH = path.join(__dirname, 'data', 'monitor-state.json');
 
-const monitorState = {
-  status: 'unknown',       // 'ok' | 'degraded' | 'offline'
-  lastCheck: null,
-  lastOk: null,
-  lastError: null,
-  errorMessage: null,
-  responseTime: null,
-  consecutiveFailures: 0,
-  alertSent: false,
-};
+function loadMonitorState() {
+  const defaults = {
+    status: 'unknown',
+    lastCheck: null,
+    lastOk: null,
+    lastError: null,
+    errorMessage: null,
+    responseTime: null,
+    consecutiveFailures: 0,
+    alertSent: false,
+  };
+  try {
+    if (fs.existsSync(MONITOR_STATE_PATH)) {
+      const saved = JSON.parse(fs.readFileSync(MONITOR_STATE_PATH, 'utf-8'));
+      return { ...defaults, ...saved };
+    }
+  } catch { /* usa defaults */ }
+  return defaults;
+}
+
+function saveMonitorState() {
+  try {
+    const dir = path.dirname(MONITOR_STATE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(MONITOR_STATE_PATH, JSON.stringify(monitorState, null, 2));
+  } catch { /* best effort */ }
+}
+
+const monitorState = loadMonitorState();
 
 async function sendAlert(message) {
   if (!ALERT_PHONE) {
@@ -226,8 +236,13 @@ async function runHealthCheck() {
     // 2. Testa o MCP (é o que costuma cair com 502)
     const mcpRes = await proxyFetch(`${GATEWAY_URL}/mcp`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tool: 'get_status', arguments: {} }),
+      headers: authHeaders(),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        id: 0,
+        params: { name: 'get_status', arguments: {} },
+      }),
       signal: AbortSignal.timeout(15000),
     });
 
@@ -250,6 +265,7 @@ async function runHealthCheck() {
         monitorState.alertSent = true;
         await sendAlert(`Tulipa lenta — resposta em ${elapsed}ms (limite: ${SLOW_THRESHOLD}ms)`);
       }
+      saveMonitorState();
       return;
     }
 
@@ -266,6 +282,8 @@ async function runHealthCheck() {
       await sendAlert(`Tulipa voltou ao normal — resposta em ${elapsed}ms`);
     }
 
+    saveMonitorState();
+
   } catch (err) {
     const elapsed = Date.now() - start;
     monitorState.responseTime = elapsed;
@@ -281,6 +299,8 @@ async function runHealthCheck() {
       monitorState.alertSent = true;
       await sendAlert(`Tulipa OFFLINE — ${err.message} (${monitorState.consecutiveFailures} falhas consecutivas)`);
     }
+
+    saveMonitorState();
   }
 }
 
@@ -568,6 +588,23 @@ app.post('/api/mesh/send/:nodeId', requireAuth, async (req, res) => {
   }
 });
 
+// Receber mensagem de outro peer (endpoint P2P)
+app.post('/api/mesh/incoming', (req, res) => {
+  try {
+    const { from, message } = req.body;
+    if (!message) return res.status(400).json({ error: 'Campo "message" é obrigatório' });
+    const parsed = mesh.handleMessage(message);
+    if (parsed) {
+      console.log(`[mesh] Mensagem recebida de ${from || 'unknown'}: ${parsed.type}`);
+      res.json({ ok: true, type: parsed.type, id: parsed.id });
+    } else {
+      res.json({ ok: false, error: 'Mensagem inválida ou não reconhecida' });
+    }
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Heartbeat manual (pinga todos os peers)
 app.post('/api/mesh/heartbeat', requireAuth, async (_req, res) => {
   try {
@@ -836,8 +873,12 @@ let monitorTimer = null;
 function startMonitor() {
   if (!MONITOR_INTERVAL || MONITOR_INTERVAL < 10000) return;
   console.log(`[monitor] Watchdog ativo — check a cada ${MONITOR_INTERVAL / 1000}s`);
-  if (ALERT_PHONE) console.log(`[monitor] Alertas para ***${ALERT_PHONE.slice(-4)}`);
-  else console.log('[monitor] ALERT_PHONE não configurado — alertas somente no console');
+  if (ALERT_PHONE) {
+    const channels = [...router._transports.keys()].join(' → ');
+    console.log(`[monitor] Alertas para ***${ALERT_PHONE.slice(-4)} via ${channels} (fallback automático)`);
+  } else {
+    console.log('[monitor] ALERT_PHONE não configurado — alertas somente no console');
+  }
 
   setTimeout(() => {
     runHealthCheck();
@@ -901,6 +942,7 @@ app.listen(PORT, () => {
   console.log('  POST /api/mesh/discover       — forçar discovery');
   console.log('  POST /api/mesh/ping/:nodeId   — ping peer');
   console.log('  POST /api/mesh/send/:nodeId   — enviar para peer');
+  console.log('  POST /api/mesh/incoming       — receber de peer (P2P)');
   console.log('  POST /api/mesh/heartbeat      — pingar todos');
 
   // Service Registry + Deploy
