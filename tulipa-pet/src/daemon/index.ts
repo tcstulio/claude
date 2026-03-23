@@ -127,6 +127,7 @@ export class PetDaemon extends EventEmitter {
       'whatsapp-bridge': 'cd ~/tulipa && nohup node bin/tulipa.js whatsapp --self-chat >> ~/.tulipa/logs/whatsapp-bridge.log 2>&1 &',
       'cloudflared': 'nohup cloudflared tunnel run tulipa >> ~/.tulipa/logs/cloudflared.log 2>&1 &',
       'supervisor': 'cd ~/tulipa/supervisor && nohup node dist/index.js >> ~/.tulipa/logs/supervisor.log 2>&1 &',
+      'tulipa-mesh': 'cd ~/tulipa-mesh && nohup node server.js >> ~/.tulipa/logs/tulipa-mesh.log 2>&1 &',
     };
 
     const cmd = restartCommands[serviceName];

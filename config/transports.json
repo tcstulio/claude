@@ -11,15 +11,26 @@
       "botToken": "",
       "chatId": ""
     },
-    "instagram": {
+    "email": {
       "enabled": false,
-      "priority": 3
+      "priority": 3,
+      "defaultTo": "",
+      "autoSend": false
+    },
+    "webhook": {
+      "enabled": false,
+      "priority": 4,
+      "endpoints": {}
     }
   },
   "queue": {
     "persistPath": "./data/queue.json",
     "maxRetries": 5,
     "processInterval": 5000
+  },
+  "mesh": {
+    "discoveryInterval": 120000,
+    "heartbeatInterval": 60000
   },
   "fallback": "queue",
   "retryPolicy": {

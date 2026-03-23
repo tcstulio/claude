@@ -98,6 +98,13 @@ const KNOWN_SERVICES: ServiceDefinition[] = [
     critical: true,
   },
   {
+    name: 'tulipa-mesh',
+    processPattern: 'tulipa-mesh/server.js',
+    healthCheck: { type: 'http', url: 'http://localhost:3000/api/health', timeoutMs: 5000 },
+    category: 'network',
+    critical: false,
+  },
+  {
     name: 'sshd',
     processPattern: 'sshd',
     healthCheck: { type: 'port', port: 8022, timeoutMs: 3000 },
