@@ -1,626 +1,354 @@
-# Projeto Tulipa — Rede Social Distribuída de Agentes IA
+# Projeto Tulipa — Rede Distribuída de Agentes IA
 
 **Autor:** Tulio Silva (CoolGroove / Teatro Mars)
-**Versão atual:** 0.4.0
+**Contato:** tcstulio@gmail.com
+**Versão:** 0.4.0
+**Data de início:** 20 de março de 2026
 **Repositório:** github.com/tcstulio/tulipa (privado)
 **Hub:** https://agent.coolgroove.com.br
+**Registro:** 23 de março de 2026
 
 ---
 
-## 1. O que é o Tulipa
+## 1. Visão
 
-Tulipa é uma **plataforma distribuída de agentes IA** que transforma qualquer dispositivo (Android, Linux, Mac, Windows, Raspberry Pi, VPS) num nó autônomo de uma rede mesh. Cada nó tem identidade criptográfica Ed25519, se conecta a peers via handshake de 3 etapas, e oferece suas capacidades (sensores, CPU, GPU, WhatsApp, shell) para a rede.
+Tulipa é uma **rede distribuída de agentes IA** onde qualquer dispositivo — celular, servidor, Raspberry Pi, VPS — se torna um nó autônomo com identidade criptográfica, capaz de oferecer e consumir serviços da rede.
 
-A interface é a conversa — via WhatsApp, chat web, API REST ou MCP.
+A interface é a conversa. WhatsApp, chat web, API REST, MCP.
 
----
-
-## 2. Inventário Completo da Plataforma
-
-### 2.1 Módulos (8 pacotes TypeScript, ~37.000 linhas)
-
-| Módulo | Linhas | Função |
-|--------|--------|--------|
-| **gateway/** | 7.310 | Servidor HTTP puro, 60+ rotas REST + MCP (JSON-RPC 2.0), auth, rate limiter, audit, WebSocket |
-| **whatsapp-bridge/** | 13.486 | Baileys, media inbox, contact enrichment, profiles, historico JSONL, self-chat, dossier |
-| **tulipa-core/** | 5.750 | CLI (30+ comandos), setup wizard, blueprints, tenant manager, onboarding |
-| **network/** | 2.877 | Identidade Ed25519, peering 3-step, mDNS, hub registry, proxy, permissions granulares |
-| **task-engine/** | 2.734 | Decomposição de tasks em steps, runner paralelo, delegation, progress tracking |
-| **supervisor/** | 2.084 | Gerenciador de processos (systemd-like), health checks, backup, deploy, rollback, diagnóstico IA |
-| **rtc/** | 1.551 | WebRTC virtual camera, signaling server, canvas rendering, TTS |
-| **termux-shell/** | 998 | Integração Android/Termux, sandbox, sensores, Termux API bridge |
-
-### 2.2 Infraestrutura Atual (Tulipa #1 — Hub)
-
-| Componente | Detalhes |
-|------------|----------|
-| **Hardware** | Android (Termux) — dispositivo móvel do Tulio |
-| **Identidade** | `agent_00726da6-5b9e-4d63-afcd-2f04c9572ebc` |
-| **Endpoint** | https://agent.coolgroove.com.br (Cloudflare Tunnel) |
-| **Modo** | Hub (nó central da rede) |
-| **Uptime** | 2+ dias contínuos |
-| **Serviços** | Gateway (:18800), WhatsApp Bridge (:18790), Cloudflared, Supervisor |
-| **Git** | Branch `main`, 20 commits, deploy via `git pull + tsc` |
-
-### 2.3 Nós na Rede
-
-| Nó | ID | Tipo | Status |
-|----|------|------|--------|
-| **Tulipa #1** (Hub) | `agent_007...ebc` | Android/Termux | Online, hub mode |
-| **Tulipa Agent** (Peer) | `agent_cd1...765` | Desconhecido | Conectado, reputação 50, endossado |
-
-### 2.4 Serviços Supervisionados (services.yaml)
-
-| Serviço | Porta | Autostart | Health Check |
-|---------|-------|-----------|-------------|
-| Gateway | 18800 | Sim | HTTP /api/health a cada 30s |
-| WhatsApp Bridge | 18790 | Sim | Port check a cada 30s |
-| Cloudflared | — | Sim | HTTP externo a cada 60s |
-| RTC (WebRTC) | 18850 | Não | HTTP /api/rtc/status |
-| SSHD | 8022 | Não | Port check |
-
-### 2.5 APIs Expostas
-
-**Públicas (sem auth):**
-- `GET /` — Landing page
-- `GET /join` — Portal de onboarding
-- `GET /chat` — Chat web
-- `GET /api/health` — Health check
-- `GET /.well-known/agent.json` — A2A Agent Card
-- `GET /llms.txt` — LLM-readable service description
-- `POST /api/network/peer/request` — Handshake step 1
-- `POST /api/network/peer/confirm` — Handshake step 3
-- `GET /install.sh`, `/install.ps1` — Installers
-- `GET /tulipa-*.tar.gz` — Tarballs versionados
-
-**Autenticadas (Bearer token):**
-- `POST /api/message` — Enviar prompt ao agente
-- `POST /mcp` — MCP Server (12 tools)
-- `GET /api/status` — Status do sistema
-- `GET /api/contacts` — Contatos WhatsApp
-- `POST /api/tasks` — Criar task
-- `GET /api/network/peers` — Listar peers
-- `POST /api/network/peer/initiate` — Iniciar peering
-- `GET /api/network/registry` — Hub registry (busca por skill)
-- `POST /api/deploy/trigger` — Deploy remoto
-- `POST /api/deploy/rollback` — Rollback
-
-### 2.6 MCP Tools (12 tools)
-
-| Tool | Scope | Função |
-|------|-------|--------|
-| `get_status` | read | Status do sistema |
-| `get_network_identity` | read | Identidade do nó |
-| `list_peers` | read | Peers conectados |
-| `list_tasks` | read | Tasks e progresso |
-| `list_tokens` | admin | Tokens ativos |
-| `create_token` | admin | Criar token |
-| `revoke_token` | admin | Revogar token |
-| `run_command` | write | Executar shell |
-| `send_prompt` | write | Enviar prompt ao Claude CLI |
-| `get_logs` | read | Logs dos serviços |
-| `send_whatsapp` | write | Enviar WhatsApp |
-| `get_whatsapp_history` | read | Histórico WhatsApp |
-| `provision_node` | admin | Instalar Tulipa em host remoto via SSH |
-
-### 2.7 Sistema de Segurança
-
-- **Tokens:** SHA-256 hashed, scopes (`read`, `write`, `admin`), categorias
-- **Roles:** `owner` (passphrase scrypt), `admin`, `peer`
-- **Peer permissions:** skills permitidas, data scopes, rate limit/hora, expiração, canRedelegate
-- **WebAuthn/Passkeys:** Registro e login biométrico
-- **Audit log:** Toda request API logada com token, IP, duração
-- **Tarball SHA256:** Verificação de integridade nos deploys
-
-### 2.8 Sistema de Rede (o que já existe)
-
-| Feature | Status | Detalhes |
-|---------|--------|----------|
-| Identidade Ed25519 | Pronto | Keypair único por nó, nunca muda |
-| Peering 3-step | Pronto | Request → Response (challenge) → Confirm |
-| Tokens bilaterais | Pronto | Cada peer dá e recebe um token |
-| mDNS Discovery | Pronto | Broadcast/listen na LAN |
-| Hub Registry | Pronto | Catálogo central, busca por skill |
-| Reputação local | Pronto | Score 0-100 por peer |
-| Endorsement | Pronto | endorsedBy[] / notEndorsedBy[] no registry |
-| Peer Permissions | Pronto | Skills, data scopes, rate limit, expiração |
-| Proxy/Failover | Pronto | Um nó serve tasks de outro quando offline |
-| Task Delegation | Pronto | POST /api/tasks em peer remoto com polling |
-| Agent Card (A2A) | Pronto | /.well-known/agent.json standard |
-| QR Code + NFC | Pronto | Peering presencial via scan/tap |
-| Social Graph | Pronto | getGraph() retorna nodes + edges |
-| Provision Node | Pronto | SSH + install + Cloudflare tunnel automático |
+Três princípios:
+1. **Nada é hardcoded** — infraestrutura entra pela rede, não pelo código
+2. **Conhecimento é soberano** — dados privados nunca saem do nó sem permissão
+3. **Toda troca é verificável** — recibos assinados por ambas as partes
 
 ---
 
-## 3. O que falta — Roadmap para Rede Social Completa
+## 2. Estado Atual — O que Existe
 
-### Fase 1: Gossip Discovery (conhecer 1 = conhecer todos)
+### 2.1 Código
 
-**Problema:** Hoje cada nó só conhece seus peers diretos. Não há propagação.
+| Módulo | Linhas src | Linhas test | Função |
+|--------|-----------|------------|--------|
+| **whatsapp-bridge/** | 11.375 | 2.336 | Baileys, media, contacts, profiles, histórico, dossier |
+| **gateway/** | 6.918 | 660 | HTTP puro, 82 rotas, MCP (13 tools), auth, audit |
+| **tulipa-core/** | 5.020 | 730 | CLI (30+ cmds), setup wizard, blueprints, onboarding |
+| **network/** | 2.609 | 338 | Ed25519 identity, peering 3-step, mDNS, registry, proxy |
+| **task-engine/** | 1.996 | 738 | Decomposição, runner paralelo, delegation |
+| **supervisor/** | 1.428 | 656 | Process manager, health, backup, deploy, rollback |
+| **rtc/** | 1.551 | 0 | WebRTC virtual camera, signaling |
+| **termux-shell/** | 998 | 0 | Android/Termux, sensores, sandbox |
+| **Total** | **31.895** | **5.458** | **37.353 linhas TypeScript** |
 
-**Solução:** BFS crawl recursivo pela rede.
+### 2.2 Testes
 
-```
-Novo MCP tool: discover_network
-Novo endpoint: GET /api/network/peers/public (retorna peers sem tokens)
+- **579 passando** / 4 falhando / 21 suites (18 ok, 3 com falha)
+- Falhas atuais: ordering em task-store, log rotation, backup tar.gz (ambiente Termux)
+- Duração: 3.4s
 
-Fluxo:
-1. Nó A chama list_peers local → Peer B (com endpoint)
-2. Nó A chama GET /api/network/peers/public em B → Peers C, D
-3. Nó A chama o mesmo em C → Peers E, F
-4. Repete até visited set parar de crescer
-5. Registra tudo no hub registry local
-```
+### 2.3 Hub Online (Tulipa #1)
 
-**Regras de propagação:**
-- Peers só expõem lista pública (nome, endpoint, skills) — nunca tokens
-- Cada nó decide se quer ser listável (`discoverable: true/false` na config)
-- Profundidade máxima configurável (default: 3 hops)
-- Cache com TTL (default: 1 hora)
+| Componente | Valor |
+|------------|-------|
+| Hardware | Android (Termux) |
+| Identidade | `agent_00726da6-5b9e-4d63-afcd-2f04c9572ebc` |
+| Endpoint | https://agent.coolgroove.com.br (Cloudflare Tunnel) |
+| Uptime | 2+ dias contínuos |
+| IP externo | 177.188.7.92 (Telefônica SP) |
+| Serviços | Gateway :18800, WhatsApp :18790, Cloudflared, Supervisor |
+| Git | 59 commits, branch `main` |
 
-### Fase 2: Confiança Transitiva (Web of Trust)
+### 2.4 Rede
 
-**Problema:** Reputação é local. Se A confia em B e B confia em C, A não sabe nada sobre C.
+| Nó | Tipo | Status |
+|----|------|--------|
+| Tulipa #1 (Hub) | Android/Termux | Online, hub mode |
+| Tulipa Agent (Peer) | Desconhecido | Conectado, reputation 50, endorsed |
+| Proxmox n97 | Servidor | Configurado, offline (sem endpoint externo) |
 
-**Solução:** Trust score transitivo com decay.
+### 2.5 Distribuição
 
-```typescript
-// Fórmula
-trust(A→C) = trust(A→B) × trust(B→C) × DECAY_FACTOR
+| Artefato | Versão |
+|----------|--------|
+| tulipa-latest.tar.gz | 0.3.3 (build f78bb75) |
+| tulipa-0.3.1.tar.gz | Com SHA256 |
+| tulipa-0.3.0.tar.gz | Com SHA256 |
+| tulipa-0.2.1.tar.gz | Com SHA256 |
+| install.sh | Linux/macOS/Termux |
+| install.ps1 | Windows |
 
-// Onde:
-// trust(X→Y) = peer.reputation / 100 (normalizado 0-1)
-// DECAY_FACTOR = 0.7 por hop (configurable)
+### 2.6 O que Funciona Hoje
 
-// Exemplo:
-// A→B = 0.9 (reputation 90)
-// B→C = 0.8 (reputation 80)
-// A→C = 0.9 × 0.8 × 0.7 = 0.504 (trust indireto)
-```
+| Feature | Status |
+|---------|--------|
+| Identidade Ed25519 | ✓ Keypair único, signChallenge/verifyChallenge |
+| Peering 3-step | ✓ Request → Response → Confirm |
+| Tokens bilaterais | ✓ Cada peer dá e recebe token |
+| mDNS Discovery | ✓ LAN broadcast/listen |
+| Hub Registry | ✓ Catálogo central, busca por skill |
+| Reputação local | ✓ 0-100 por peer, +1/-5 por task |
+| Endorsement | ✓ endorsedBy[] no registry |
+| Peer Permissions | ✓ skills, dataScopes, rate limit, expiração, canRedelegate |
+| Proxy/Failover | ✓ Nó serve tasks de outro offline |
+| Task Delegation | ✓ POST /api/tasks + polling |
+| Task Decomposition | ✓ Claude decompõe em steps com DAG |
+| Agent Card (A2A) | ✓ /.well-known/agent.json |
+| QR Code + NFC | ✓ Peering presencial |
+| Social Graph | ✓ nodes + edges |
+| Provision Node | ✓ SSH + install + Cloudflare tunnel |
+| WhatsApp Bridge | ✓ Mensagens, media, contacts, profiles |
+| Chat Web | ✓ /chat com streaming |
+| Deploy + Rollback | ✓ git pull + tsc, 5 rollbacks |
+| Backup automático | ✓ Diário, 7 retenções |
+| Health checks | ✓ HTTP + port, auto-restart |
+| WebAuthn/Passkeys | ✓ Login biométrico |
+| Audit log | ✓ Toda request logada |
+| Claim codes | ✓ Convites com aprovação |
+| Tarballs SHA256 | ✓ Integridade de deploy |
+| Capability detection | ✓ Auto-detecta gpu, ssh, whatsapp, etc. |
+| Proxmox client | ✓ CRUD containers (LXC), VMs |
 
-**Implementação:**
-- Novo campo `transitiveTrust: number` no HubEntry
-- Cálculo feito durante gossip discovery
-- Trust score influencia ranking no `queryBySkill()`
-- Threshold mínimo para delegação automática (default: 0.3)
+### 2.7 O que NÃO Funciona / Falta
 
-### Fase 3: Marketplace de Skills (federated search)
-
-**Problema:** `queryBySkill()` só busca localmente no hub registry.
-
-**Solução:** Propagação de queries pela rede.
-
-```
-Nó A precisa de skill "gpu-compute"
-→ Busca local: não tem
-→ Pergunta ao Hub: não tem
-→ Hub propaga para peers que são hubs: Hub B responde
-→ Hub B tem Nó X com GPU disponível
-→ Nó A delega task para Nó X via Hub B (relay)
-```
-
-**Novo endpoint:** `POST /api/network/query`
-```json
-{
-  "skill": "gpu-compute",
-  "maxHops": 3,
-  "minTrust": 0.3,
-  "budget": { "maxTasksPerHour": 5 }
-}
-```
-
-### Fase 4: Propriedade e Governança
-
-**O que já existe:** Owner com passphrase, roles (owner/admin/peer), peer permissions.
-
-**O que falta:**
-
-1. **Multi-owner:** Mais de uma pessoa pode ser owner de um nó
-2. **Organizações:** Agrupar nós sob uma entidade (CoolGroove, Teatro Mars)
-3. **Delegação de governança:** Owner delega admin a outro nó/pessoa
-4. **Votação:** Decisões da rede (aceitar novo hub, banir nó) por consenso
-5. **Reputação cross-hub:** Hubs trocam endorsements com peso reduzido
-
-```typescript
-interface Organization {
-  id: string;           // "org_" + UUID
-  name: string;         // "CoolGroove"
-  owners: string[];     // identity IDs com poder de voto
-  members: string[];    // identity IDs dos nós membros
-  policies: {
-    autoAcceptPeering: boolean;
-    minTrustForDelegation: number;
-    maxHopsForDiscovery: number;
-    votingThreshold: number; // % de owners para aprovar ação
-  };
-}
-```
-
-### Fase 5: Economia de Serviços
-
-**Conceito:** Nós oferecem recursos (GPU, storage, bandwidth, skills especializadas) e consomem recursos de outros. Um sistema de créditos/karma.
-
-```typescript
-interface ServiceLedger {
-  nodeId: string;
-  credits: number;        // saldo atual
-  earned: number;         // total ganho (servindo tasks)
-  spent: number;          // total gasto (delegando tasks)
-  history: LedgerEntry[];
-}
-
-interface LedgerEntry {
-  timestamp: string;
-  type: "earned" | "spent";
-  amount: number;
-  taskId: string;
-  peerId: string;
-  skill: string;
-}
-```
-
-**Regras:**
-- Cada task delegada custa créditos proporcionais ao recurso
-- Servir tasks ganha créditos
-- Nós novos começam com créditos iniciais (bootstrap)
-- Nós com saldo negativo perdem prioridade no ranking
-- Sem blockchain — ledger distribuído com consenso entre hubs
+| Feature | Status |
+|---------|--------|
+| Gossip discovery | ✗ Cada nó só vê peers diretos |
+| Confiança transitiva | ✗ Trust é local, não propaga |
+| Federated skill search | ✗ Busca só no registry local |
+| TaskReceipt / Ledger | ✗ Não existe registro verificável de transações |
+| Economia / Créditos | ✗ Sem contabilidade de troca |
+| Separação infra/conhecimento | ✗ Capabilities e dados misturados |
+| Canary autônomo | ✗ Sem skill canary-test |
+| Organizações | ✗ Sem agrupamento de nós |
+| Multi-owner | ✗ Um owner por nó |
+| Proxmox como peer | ✗ Config local, não via rede |
 
 ---
 
-## 4. Nó de Testes (Canary Node) — A Rede Decide
+## 3. Arquitetura de Camadas
 
-### Conceito
-
-Não é um nó fixo dedicado. A **rede decide** qual nó roda os testes, baseado em:
-- Disponibilidade de recursos (CPU, RAM, disco)
-- Trust score do nó
-- Proximidade ao hub (latência)
-- Capacidade de provisionar containers (Proxmox)
-
-### Infraestrutura Disponível
-
-**Proxmox VE** (peer da rede, não hardcoded):
-- **Nó:** `n97` — se registra na rede como peer com `capability: ["compute", "proxmox"]`
-- **Endereço:** vem do peering (endpoint externo), **nunca** hardcoded no código
-- **Auth:** configurado via `POST /api/proxmox/configure` ou auto-discovery da rede
-- **Capacidades:** LXC containers, VMs, storage management, backup
-- **Código:** `gateway/src/handlers/proxmox.ts` — client completo, retorna "not configured" se host vazio
-- **Princípio:** Proxmox é só mais um nó — a rede decide se/quando usá-lo
-
-### Como a Rede Decide (Scheduler Autônomo)
-
-```
-Push no GitHub
-      ↓
-Hub recebe webhook (ou polling)
-      ↓
-Hub cria task: { skill: "canary-test", request: "testar v0.4.1" }
-      ↓
-Task Engine busca: quem pode rodar isso?
-      ↓
-queryBySkill("canary-test") + queryBySkill("compute")
-      ↓
-Ranking por: trust × capacidade × disponibilidade
-      ↓
-Opção 1: Proxmox → cria LXC container efêmero → instala Tulipa → roda testes → destrói
-Opção 2: Peer com compute → delega task → peer roda e reporta
-Opção 3: Hub roda localmente (fallback)
-      ↓
-Resultado: { success: true, tests: 163/163, commit: "abc123" }
-      ↓
-Se OK → Hub auto-deploy (ou notifica owner para aprovar)
-Se falha → rollback no canary, Hub não é afetado
-```
-
-### Container Efêmero no Proxmox (preferido)
-
-A grande vantagem: o canary **não é um nó permanente**. É um container LXC que:
-1. Nasce quando precisa testar
-2. Instala Tulipa do tarball (já existe em `/tulipa-latest.tar.gz`)
-3. Roda `npm test` (163 testes)
-4. Roda health check nos serviços
-5. Reporta resultado ao Hub
-6. Se destrói
-
-```typescript
-// Novo skill: "canary-test"
-interface CanaryTestConfig {
-  trigger: "webhook" | "polling" | "manual";
-  pollingInterval: number;        // minutos (default: 5)
-  proxmox: {
-    template: string;             // "ubuntu-24.04"
-    cores: number;                // 2
-    memory: number;               // 1024 MB
-    disk: number;                 // 10 GB
-    destroyAfter: boolean;        // true — efêmero
-    keepOnFailure: boolean;       // true — manter para debug
-  };
-  tests: {
-    command: string;              // "npm test"
-    healthCheck: boolean;         // verificar serviços pós-build
-    timeout: number;              // 300000 ms
-  };
-  promotion: {
-    autoPromote: boolean;         // false — requer aprovação
-    notifyVia: "whatsapp" | "mcp";
-    approvalTimeout: number;      // 3600000 ms (1h)
-  };
-}
-```
-
-### Fallback: Delegação para Peers
-
-Se Proxmox estiver offline (como agora), o Hub pode delegar para qualquer peer com skill `compute`:
-
-```
-Hub → queryBySkill("compute") → Peer X (VPS com Docker)
-    → delegate({ request: "git clone, npm install, npm test" })
-    → Peer X reporta resultado
-```
-
-O TaskRunner já faz isso (`task-runner.ts:executeStep`):
-- Verifica se skill é local → se não, busca peer
-- Delega via `TaskDelegation.delegate()`
-- Se falha, tenta proxy
-- Atualiza reputação do peer (+1 sucesso, -5 falha)
-
-### Quem pode ser canary?
-
-Qualquer nó da rede que tenha:
-1. `capability: ["compute"]` ou `capability: ["canary"]`
-2. Trust score ≥ 0.5
-3. Recursos suficientes (detectados via `system-status`)
-4. Permissão `canRedelegate: true` (para receber tasks do Hub)
-
-A rede cresce → mais nós com compute → mais opções de canary → mais resiliência.
-
-### Configuração do Canary
-
-```yaml
-# services.yaml do canary node
-deploy:
-  repo_dir: /home/tulipa/tulipa
-  branch: main              # sempre tracking main
-  pre_deploy: git stash
-  deploy_command: git pull origin main
-  post_deploy: npm run build && npm test
-  auto_deploy: true          # NOVO: pull automático a cada N minutos
-  auto_deploy_interval: 5    # NOVO: a cada 5 minutos
-  notify_on_success: true    # NOVO: notifica hub quando deploy OK
-  notify_on_failure: true    # NOVO: notifica hub quando falha
-  rollback_keep: 5
-
-canary:
-  enabled: true
-  hub_endpoint: https://agent.coolgroove.com.br
-  hub_token: <token do hub>
-  test_command: npm test
-  health_check_after_deploy: true
-  promote_command: |          # Comando para promover para o hub
-    curl -X POST https://agent.coolgroove.com.br/api/deploy/trigger \
-      -H "Authorization: Bearer <admin_token>" \
-      -H "Content-Type: application/json" \
-      -d '{"source": "canary", "commit": "$COMMIT"}'
-```
-
-### Fluxo de Promoção
-
-```
-1. Push para main no GitHub
-2. Canary detecta (polling ou webhook)
-3. git pull + build
-4. npm test (163 testes)
-5. Health check nos serviços
-6. Se tudo OK:
-   - Notifica owner via WhatsApp: "v0.4.1 testada com sucesso no canary"
-   - Owner responde "promover" (ou auto-promote se configurado)
-   - Canary chama POST /api/deploy/trigger no Hub
-   - Hub faz deploy (git pull + build + restart)
-   - Hub confirma health → notifica owner
-7. Se falha:
-   - Notifica owner: "v0.4.1 falhou: 3 testes quebraram"
-   - Canary faz rollback automático
-   - Hub NÃO é afetado
-```
-
----
-
-## 5. Arquitetura de Camadas
-
-A rede Tulipa tem 3 camadas distintas que **não devem se misturar**:
+A rede tem 3 camadas que **não se misturam**:
 
 ### Camada 1: Infraestrutura (pública)
 
-O que qualquer nó pode oferecer à rede. É **público por natureza** — quem tem, anuncia.
+Recursos que qualquer nó anuncia à rede. Público por natureza.
 
 | Recurso | Capability | Exemplo |
 |---------|-----------|---------|
 | CPU/RAM | `compute` | Proxmox LXC, Docker, bare metal |
-| Proxmox VE | `proxmox` | Criar/destruir containers sob demanda |
+| Proxmox VE | `proxmox` | Containers sob demanda |
 | GPU | `gpu-compute` | Inference, rendering |
 | Storage | `storage` | Backup, cache, artefatos |
-| SSH | `ssh-access` | Shell remoto mediado pela rede |
+| SSH | `ssh-access` | Shell mediado pela rede |
 | Network | `relay`, `proxy` | Túnel, proxy entre nós |
 
-**Princípio:** Nenhum recurso de infra é hardcoded. Um Proxmox, um VPS, um Raspberry Pi — todos entram na rede da mesma forma: instalar Tulipa → detectar capabilities → fazer peering → anunciar ao registry.
+**Princípio:** Nenhum recurso é hardcoded. Todo nó entra igual: instalar Tulipa → detectar capabilities → peering → anunciar.
 
-**Adoção de um servidor Proxmox:**
+**Adoção de um servidor (Proxmox, VPS, qualquer coisa):**
 ```
-1. Instalar Tulipa no Proxmox (ou num LXC gerenciador dentro dele)
-2. tulipa setup → gera identidade Ed25519
-3. tulipa peer connect <hub-url> → peering com o Hub
-4. detectCapabilities() retorna: ["compute", "proxmox", "ssh-access", "storage"]
-5. Hub registra no registry: "agent_xyz oferece proxmox em endpoint externo"
-6. Qualquer nó da rede que precise de container → rede encontra esse peer
+1. Instalar Tulipa no servidor
+2. tulipa setup → identidade Ed25519
+3. tulipa peer connect <hub-url> → peering
+4. detectCapabilities() → ["compute", "proxmox", "ssh-access", "storage"]
+5. Hub registra no registry com endpoint externo do peer
+6. Rede sabe que este nó existe e o que ele oferece
 ```
 
-**SSH pela rede:**
-SSH não é exposto diretamente. A rede media:
+**SSH pela rede (mediado, não exposto):**
 ```
 Nó A quer shell no Nó B
-  → A envia task { skill: "ssh-access", request: "ls -la /data" }
-  → Rede verifica: A tem permissão? (allowedSkills inclui "ssh-access"?)
-  → B executa localmente e retorna resultado
-  → Gera TaskReceipt assinado por ambos
+  → task { skill: "ssh-access", request: "ls -la /data" }
+  → Rede verifica: allowedSkills inclui "ssh-access"?
+  → B executa localmente, retorna resultado
+  → TaskReceipt assinado por ambos
 ```
 
-### Camada 2: Conhecimento Privado
+### Camada 2: Conhecimento (privado)
 
-Dados que **pertencem a alguém** e nunca saem do nó sem permissão explícita.
+Dados que pertencem a alguém. Nunca saem sem permissão.
 
-| Dado | dataScope | Quem acessa |
-|------|-----------|-------------|
-| Clientes, agenda, financeiro | `contacts`, `financeiro` | Só o owner |
-| Modelos treinados | `models` | Nó local |
-| Histórico de conversas | `messages` | Owner + peers autorizados |
-| Config de negócio (preços, regras) | `business` | Owner |
-| Credenciais (tokens, senhas) | nunca exposto | Nó local apenas |
+| Dado | dataScope | Acesso |
+|------|-----------|--------|
+| Clientes, agenda | `contacts` | Owner |
+| Financeiro | `financeiro` | Owner |
+| Conversas | `messages` | Owner + peers autorizados |
+| Config de negócio | `business` | Owner |
+| Modelos treinados | `models` | Local |
+| Credenciais | — | Nunca exposto |
 
-**Proteção:** `PeerPermissions.dataScopes` controla o que cada peer pode ler. Default é `[]` — ninguém acessa nada até ser explicitamente permitido.
+**Proteção:** `PeerPermissions.dataScopes` — default `[]`, ninguém lê nada.
 
-**Princípio:** Infraestrutura é compartilhável, conhecimento é soberano.
+**Princípio:** Infraestrutura é pública, conhecimento é soberano.
 
-### Camada 3: Economia (troca de valor)
+### Camada 3: Economia (verificável)
 
-Como serviços são trocados, registrados e recompensados.
+Toda troca de serviço gera um recibo criptográfico.
 
-#### TaskReceipt — o recibo verificável
-
-Cada transação na rede gera um recibo com hash + dupla assinatura Ed25519:
+#### TaskReceipt
 
 ```typescript
 interface TaskReceipt {
-  // Identificação
-  id: string;                      // "rcpt_" + hash[:16]
-  taskId: string;                  // task original
+  id: string;                    // "rcpt_" + hash[:16]
+  taskId: string;
 
-  // Partes
-  from: string;                    // identityId de quem pediu
-  to: string;                      // identityId de quem executou
+  from: string;                  // quem pediu
+  to: string;                    // quem executou
 
-  // O que foi feito
-  skill: string;                   // "compute", "proxmox", "chat", etc.
-  description: string;             // resumo da task
-  resultHash: string;              // SHA-256(result) — prova sem expor conteúdo
+  skill: string;
+  resultHash: string;            // SHA-256(result) — prova sem expor
 
-  // Custo
   resourceUsed: {
+    durationMs: number;
     cpuSeconds?: number;
     memoryMB?: number;
-    durationMs: number;
     diskMB?: number;
   };
 
-  // Verificação
-  timestamp: string;               // ISO
-  hash: string;                    // SHA-256(from + to + taskId + skill + resultHash + timestamp)
-  fromSignature: string;           // Ed25519(hash, fromPrivKey)
-  toSignature: string;             // Ed25519(hash, toPrivKey)
+  timestamp: string;
+  hash: string;                  // SHA-256(from + to + taskId + skill + resultHash + timestamp)
+  fromSignature: string;         // Ed25519 de quem pediu
+  toSignature: string;           // Ed25519 de quem executou
 }
 ```
 
-**O que isso permite:**
-- **Prova de trabalho** — B prova que executou a task pro A, com assinaturas de ambos
-- **Reputation verificável** — não é só um número local, é baseado em receipts assinados
-- **Privacidade** — `resultHash` prova o resultado sem expor os dados
-- **Auditoria** — qualquer nó pode verificar as assinaturas com as public keys
-- **Economia** — receipts viram créditos: "B tem 500 receipts de compute"
+**Por que funciona:**
+- Dupla assinatura = ambas as partes concordam que aconteceu
+- `resultHash` prova o trabalho sem expor dados
+- Qualquer nó verifica com as public keys (já existem no peering)
+- Não é blockchain — é ledger bilateral entre pares de nós
 
-#### Ledger Distribuído
-
-Cada nó mantém seu ledger local de receipts:
+#### Ledger Local
 
 ```
 ~/.tulipa/ledger/
-  receipts/          # todos os receipts (from ou to = eu)
-  balance.json       # saldo: { "agent_xyz": +50, "agent_abc": -20 }
-  summary.json       # agregado: total earned, total spent, by skill
+  receipts/        # TaskReceipts (from ou to = eu)
+  balance.json     # { "agent_xyz": +50, "agent_abc": -20 }
+  summary.json     # totais por skill, earned, spent
 ```
-
-**Não é blockchain** — é um ledger bilateral. Cada par de nós tem uma conta-corrente. Se A e B discordam, as assinaturas resolvem quem está certo.
 
 #### Créditos
 
 ```
-Novo nó entra → recebe bootstrap credits (ex: 100)
-  → Pode consumir 100 tasks da rede
-  → Ganha créditos executando tasks para outros
-  → Saldo negativo? Taxa de prioridade cai no ranking
-  → Saldo positivo? Prioridade sobe
+Novo nó → bootstrap credits (100)
+  → Consome tasks da rede (gasta créditos)
+  → Executa tasks para outros (ganha créditos)
+  → Saldo negativo → prioridade cai
+  → Saldo positivo → prioridade sobe
 
 Ranking de delegação = trust × reputation × saldo
 ```
 
 ---
 
-## 6. Plano de Execução
+## 4. Plano de Execução
 
-### Sprint 1: TaskReceipt + Ledger (prioridade)
-- [ ] Implementar `TaskReceipt` no task-engine
-- [ ] Hash SHA-256 + dupla assinatura Ed25519 (infra já existe em identity.ts)
+### Sprint 1: Estabilizar Base
+- [ ] Corrigir 4 testes falhando (task-store ordering, log rotation, backup)
+- [ ] Build tarball v0.4.0 com SHA256
+- [ ] Atualizar build-info.json
+- [ ] Proxmox sem IP hardcoded (✓ feito no código, falta rebuild)
+
+### Sprint 2: TaskReceipt + Ledger
+- [ ] `task-engine/src/receipt.ts` — interface + geração de hash + assinatura
+- [ ] Integrar com `signChallenge()` do identity.ts (Ed25519 já existe)
 - [ ] Ledger local em `~/.tulipa/ledger/`
-- [ ] Gerar receipt ao final de cada task delegada
-- [ ] MCP tool `get_ledger` para consultar saldo
+- [ ] Gerar receipt ao final de cada task delegada (task-runner.ts)
+- [ ] Endpoint `GET /api/ledger` — consultar saldo e receipts
+- [ ] MCP tool `get_ledger`
 - [ ] Testes
 
-### Sprint 2: Separação Infra vs Conhecimento
-- [ ] Classificar capabilities em `infra` vs `private`
-- [ ] Guard em todas as rotas: verificar `dataScopes` antes de expor dados
-- [ ] Endpoint `GET /api/infra` — o que este nó oferece (público)
-- [ ] Endpoint `GET /api/knowledge` — o que este nó sabe (requer permissão)
+### Sprint 3: Separação Infra vs Conhecimento
+- [ ] Novo tipo: `CapabilityCategory = "infra" | "private"`
+- [ ] Classificar capabilities existentes
+- [ ] Guard em rotas: verificar `dataScopes` antes de expor dados
+- [ ] `GET /api/infra` — o que este nó oferece (público, sem auth)
+- [ ] `GET /api/knowledge` — catálogo do que existe (requer permissão por scope)
 - [ ] Testes
 
-### Sprint 3: Adoção de Infra (Proxmox, VPS, SSH)
-- [ ] Fluxo: `tulipa infra adopt <endpoint>` — detecta tipo, faz peering, registra capabilities
-- [ ] Proxmox como peer (não hardcoded) com endpoint externo
-- [ ] SSH mediado pela rede (task-based, não port forwarding)
-- [ ] Auto-discovery de Proxmox via API scan na rede local
+### Sprint 4: Adoção de Infra
+- [ ] CLI: `tulipa infra adopt <endpoint>` — detecta tipo, faz peering, registra
+- [ ] Proxmox como peer da rede (endpoint externo no peering)
+- [ ] SSH mediado por tasks (não port forwarding)
+- [ ] Auto-discovery na LAN (scan de APIs conhecidas: Proxmox :8006, Docker :2375)
 - [ ] Testes
 
-### Sprint 4: Canary Autônomo
+### Sprint 5: Canary Autônomo
 - [ ] Skill `canary-test` no task-engine
-- [ ] Rede decide qual nó roda (Proxmox efêmero preferido)
-- [ ] Container LXC efêmero: cria → testa → destrói
-- [ ] Notificação de resultado via WhatsApp/MCP
+- [ ] Rede decide qual nó roda (ranking por compute + trust + saldo)
+- [ ] Container LXC efêmero: cria → instala → testa → destrói
+- [ ] Notificação via WhatsApp/MCP
+- [ ] Fluxo de promoção com aprovação do owner
 - [ ] Testes
 
-### Sprint 5: Gossip + Confiança Transitiva
-- [ ] `GET /api/network/peers/public` + BFS crawler
-- [ ] Trust transitivo com decay factor
-- [ ] Federated skill search entre hubs
+### Sprint 6: Gossip + Confiança Transitiva
+- [ ] `GET /api/network/peers/public` — lista pública (sem tokens)
+- [ ] BFS crawler com visited set, max hops, cache TTL
+- [ ] Trust transitivo: `trust(A→C) = trust(A→B) × trust(B→C) × 0.7`
+- [ ] Trust score no ranking de `queryBySkill()`
+- [ ] Threshold mínimo para delegação (default: 0.3)
+- [ ] Testes
+
+### Sprint 7: Federated Search + Relay
+- [ ] `POST /api/network/query` — busca por skill na rede
+- [ ] Propagação entre hubs
+- [ ] Relay de tasks via hub intermediário
 - [ ] Rate limiting cross-network
 - [ ] Testes
 
-### Sprint 6: Economia Completa
+### Sprint 8: Economia Completa
 - [ ] Bootstrap credits para novos nós
-- [ ] Ranking de delegação: trust × reputation × saldo
-- [ ] Dashboard de economia (saldo, top contribuidores)
-- [ ] Organizações e multi-owner
+- [ ] Ranking composto: trust × reputation × saldo
+- [ ] Dashboard: saldo, top contribuidores, skills mais usadas
+- [ ] Disputas: verificação de receipts por terceiro
+- [ ] Testes
+
+### Sprint 9: Organizações e Governança
+- [ ] Interface Organization (id, name, owners, members, policies)
+- [ ] CLI: `tulipa org create`, `tulipa org invite`
+- [ ] Políticas por org (minTrust, maxHops, votingThreshold)
+- [ ] Reputação cross-hub
 - [ ] Testes
 
 ---
 
-## 7. Resumo Técnico
+## 5. Resumo Técnico
 
 | Métrica | Valor |
 |---------|-------|
-| Linguagem | TypeScript (ESM) |
-| Runtime | Node.js ≥20 |
-| Linhas de código | ~37.000 |
-| Testes | 163 |
-| Módulos | 8 |
-| Rotas API | 60+ |
+| Linguagem | TypeScript (ESM, strict) |
+| Runtime | Node.js ≥ 20 |
+| Código fonte | 31.895 linhas |
+| Testes | 5.458 linhas, 579 passando |
+| Módulos | 8 pacotes |
+| Rotas HTTP | 82 |
 | MCP Tools | 13 |
+| Commits | 59 |
+| Idade do projeto | 3 dias (20-23 mar 2026) |
 | Plataformas | Android, Linux, macOS, Windows |
-| Protocolo de rede | HTTP + Ed25519 + Bearer tokens |
-| Discovery | mDNS (LAN) + Hub Registry (WAN) + QR/NFC (presencial) |
-| Economia | TaskReceipt (SHA-256 + Ed25519 dual-sign) |
+| Protocolo | HTTP + Ed25519 + Bearer tokens bilaterais |
+| Discovery | mDNS (LAN) + Hub Registry (WAN) + QR/NFC |
+| Economia | TaskReceipt (SHA-256 + Ed25519 dual-sign) [planejado] |
 | Camadas | Infraestrutura (pública) · Conhecimento (privado) · Economia (verificável) |
-| Deploy | git pull + tsc, rollback, tarballs SHA256 |
-| Backup | Diário, 7 retenções, WhatsApp auth + contacts + history |
+| Deploy | git pull + tsc, rollback (5 versões), tarballs SHA256 |
+| Licença | Apache-2.0 |
 
 ---
 
-*Documento atualizado em 2026-03-23 — arquitetura de camadas, economia com TaskReceipt, e separação infra/conhecimento.*
+## 6. Hash de Registro
+
+Este documento serve como registro do estado do projeto Tulipa na data abaixo.
+
+**Data:** 2026-03-23
+**Versão:** 0.4.0
+**Commit mais recente no Hub:** `46ab073`
+**Linhas de código:** 37.353
+**Testes passando:** 579/583
+
+Para verificar a integridade deste registro, o hash SHA-256 do commit HEAD do repositório pode ser consultado a qualquer momento via:
+```bash
+curl -s https://agent.coolgroove.com.br/mcp -H "Authorization: Bearer <token>" \
+  -d '{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"run_command","arguments":{"command":"cd ~/tulipa && git rev-parse HEAD && git log -1 --format=%H"}}}'
+```
+
+---
+
+*Registrado por Tulio Silva — CoolGroove / Teatro Mars — 23 de março de 2026.*
