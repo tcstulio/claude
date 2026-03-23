@@ -44,11 +44,17 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // ─── Helper: chama MCP tool no gateway ─────────────────────────────────
+let _mcpCallId = 0;
 async function callMcpTool(tool, args = {}, req = null) {
   const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
     method: 'POST',
     headers: authHeaders(req),
-    body: JSON.stringify({ tool, arguments: args }),
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      id: ++_mcpCallId,
+      params: { name: tool, arguments: args },
+    }),
   });
 
   if (!res.ok) {
@@ -60,7 +66,17 @@ async function callMcpTool(tool, args = {}, req = null) {
     throw new Error(detail);
   }
 
-  return res.json();
+  const json = await res.json();
+
+  // JSON-RPC 2.0: desembrulha result/error
+  if (json.jsonrpc === '2.0') {
+    if (json.error) {
+      throw new Error(`MCP error ${json.error.code}: ${json.error.message}`);
+    }
+    return json.result;
+  }
+
+  return json;
 }
 
 // ─── Inicializa Transport Layer ────────────────────────────────────────
@@ -171,8 +187,13 @@ async function runHealthCheck() {
     // 2. Testa o MCP (é o que costuma cair com 502)
     const mcpRes = await proxyFetch(`${GATEWAY_URL}/mcp`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tool: 'get_status', arguments: {} }),
+      headers: authHeaders(),
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        id: 0,
+        params: { name: 'get_status', arguments: {} },
+      }),
       signal: AbortSignal.timeout(15000),
     });
 
