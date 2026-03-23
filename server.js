@@ -3,6 +3,7 @@ const { ProxyAgent, fetch: undiciFetch } = require('undici');
 
 // ─── Transport Layer ───────────────────────────────────────────────────
 const WhatsAppTransport = require('./lib/transport/whatsapp');
+const TelegramTransport = require('./lib/transport/telegram');
 const MessageQueue = require('./lib/queue');
 const Router = require('./lib/router');
 const protocol = require('./lib/protocol');
@@ -71,8 +72,14 @@ const whatsapp = new WhatsAppTransport({
   priority: 1,
 });
 
+const telegram = new TelegramTransport({
+  fetch: proxyFetch,
+  priority: 2,
+});
+
 const router = new Router({ queue });
 router.register(whatsapp);
+if (telegram.configured) router.register(telegram);
 
 // Log de eventos do router
 router.on('sent', ({ channel, destination }) => {
@@ -314,6 +321,35 @@ app.post('/api/send', async (req, res) => {
   }
 });
 
+// ─── Telegram endpoints ────────────────────────────────────────────────
+
+app.post('/api/telegram/send', async (req, res) => {
+  try {
+    const { chatId, message } = req.body;
+    if (!message) {
+      return res.status(400).json({ error: 'Campo "message" é obrigatório' });
+    }
+    const dest = chatId || telegram._chatId;
+    if (!dest) {
+      return res.status(400).json({ error: 'Sem chatId (envie no body ou configure TELEGRAM_CHAT_ID)' });
+    }
+    const result = await telegram.send(dest, message);
+    res.json({ ok: true, channel: 'telegram', result });
+  } catch (err) {
+    res.status(502).json({ error: 'Falha ao enviar via Telegram', detail: err.message });
+  }
+});
+
+app.get('/api/telegram/updates', async (req, res) => {
+  try {
+    const { chatId, limit } = req.query;
+    const messages = await telegram.receive(chatId, { limit: limit ? parseInt(limit, 10) : 20 });
+    res.json({ ok: true, messages });
+  } catch (err) {
+    res.status(502).json({ error: 'Falha ao buscar updates', detail: err.message });
+  }
+});
+
 // Proxy genérico MCP
 app.post('/api/mcp/:tool', async (req, res) => {
   try {
@@ -357,6 +393,17 @@ app.listen(PORT, () => {
   console.log('  GET  /api/peers');
   console.log('  GET  /api/logs');
   console.log('  POST /api/mcp/:tool');
+
+  // Telegram endpoints (só mostra se configurado)
+  if (telegram.configured) {
+    console.log('  POST /api/telegram/send');
+    console.log('  GET  /api/telegram/updates');
+    telegram.startPolling((msg) => {
+      console.log(`[telegram] Mensagem de ${msg.from}: ${msg.text.slice(0, 50)}`);
+    });
+  } else {
+    console.log('\n  Telegram: não configurado (set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)');
+  }
 
   startMonitor();
   queue.start(5000);
