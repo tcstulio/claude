@@ -605,6 +605,19 @@ app.post('/api/mesh/prompt/:nodeId', requireAuth, async (req, res) => {
   }
 });
 
+// Solicitar admin token de um peer (para gerenciamento remoto)
+app.post('/api/mesh/admin-token/:nodeId', requireAuth, async (req, res) => {
+  try {
+    const { admin_token } = req.body;
+    const result = await mesh.requestAdminToken(req.params.nodeId, {
+      adminToken: admin_token,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(502).json({ error: 'Falha ao obter admin token', detail: err.message });
+  }
+});
+
 // Registrar ou atualizar endpoint de um peer
 app.post('/api/mesh/peers/:nodeId', (req, res) => {
   try {

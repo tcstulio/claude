@@ -131,14 +131,25 @@ test/                          — 78 testes (todos passando)
 - `scripts/setup-2070.sh` — script de setup local
 - `scripts/deploy-to-2070.sh` — deploy remoto via MCP (precisa admin token)
 
-### Blocker
-**Token admin no Servidor 2070.** Nosso peer token tem scope [read, write, peer].
-Para obter admin, no terminal do 2070:
-```
-cat ~/.tulipa/api-tokens.yaml     # copiar token owner
-# ou
-cd ~/tulipa && node bin/tulipa.js token create --name hub-admin --scopes admin
-```
+### Blocker (RESOLVIDO)
+Token admin criado manualmente no 2070: `tulipa_4d30...d79b` (tok_xxx, scope [read,write,admin]).
+Tokens no 2070 são hasheados — valor original só aparece na criação.
+
+### Setup executado no 2070
+1. git init + fetch + reset --hard origin/main → **v0.4.0**
+2. npm install + typescript instalado
+3. network compilado (--skipLibCheck)
+4. supervisor compilado
+5. gateway: dist/ do git (erros TS non-critical, JS funcional)
+6. Hub mode: pendente (precisa rodar no terminal)
+7. Supervisor: pendente (precisa restart do gateway)
+
+### Handshake fix
+- `mesh.requestAdminToken(nodeId)` — solicita create_token no peer via MCP
+- `POST /api/mesh/admin-token/:nodeId` — rota REST
+- Salva adminToken no registry do peer
+- Problema: no peering original, só trocaram tokens peer [read,write,peer]
+  sem trocar admin token para gerenciamento remoto
 
 ### Depois disso
 - TaskReceipt + Ledger (Sprint 2) — contabilidade de tarefas
