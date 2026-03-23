@@ -43,6 +43,19 @@ function authHeaders(req) {
   return h;
 }
 
+// Middleware de autenticação — requer Bearer token válido
+function requireAuth(req, res, next) {
+  const token = resolveToken(req);
+  if (!token) {
+    return res.status(401).json({ error: 'Authorization required — envie header Authorization: Bearer <token>' });
+  }
+  // Se API_TOKEN está configurado, o token do request deve bater
+  if (API_TOKEN && token !== API_TOKEN) {
+    return res.status(403).json({ error: 'Token inválido' });
+  }
+  next();
+}
+
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -318,6 +331,16 @@ async function runHealthCheck() {
 }
 
 // ─── Endpoints ─────────────────────────────────────────────────────────
+
+// Build info (público, para verificar versão deployada)
+app.get('/api/build-info', (_req, res) => {
+  try {
+    const info = require('./build-info.json');
+    res.json(info);
+  } catch {
+    res.json({ version: 'unknown', error: 'build-info.json não encontrado' });
+  }
+});
 
 // Monitor
 app.get('/api/monitor', (_req, res) => {
@@ -1016,7 +1039,7 @@ function startMonitor() {
 }
 
 app.listen(PORT, () => {
-  console.log(`\nTulipa API v4.0 — Multi-Channel + Mesh`);
+  console.log(`\nTulipa API v0.4.0 — Multi-Channel + Mesh + Ledger`);
   console.log(`Dashboard: http://localhost:${PORT}/`);
   console.log(`Gateway: ${GATEWAY_URL}`);
   console.log(`Node: ${protocol.NODE_ID} (${protocol.NODE_NAME})`);
