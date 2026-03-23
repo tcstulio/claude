@@ -43,40 +43,65 @@ function authHeaders(req) {
 app.use(express.json());
 app.use(express.static('public'));
 
-// ─── Helper: chama MCP tool no gateway ─────────────────────────────────
+// ─── Helper: chama MCP tool no gateway (com retry para 502/503) ──────
 let _mcpCallId = 0;
+const MCP_MAX_RETRIES = 3;
+const MCP_RETRY_DELAYS = [2000, 4000, 8000]; // backoff exponencial
+
 async function callMcpTool(tool, args = {}, req = null) {
-  const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
-    method: 'POST',
-    headers: authHeaders(req),
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      method: 'tools/call',
-      id: ++_mcpCallId,
-      params: { name: tool, arguments: args },
-    }),
-  });
+  let lastError;
 
-  if (!res.ok) {
-    const text = await res.text();
-    const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
-    const detail = isHtml
-      ? `Gateway retornou ${res.status} (servidor MCP offline)`
-      : `Gateway retornou ${res.status}: ${text}`;
-    throw new Error(detail);
-  }
+  for (let attempt = 0; attempt <= MCP_MAX_RETRIES; attempt++) {
+    try {
+      const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
+        method: 'POST',
+        headers: authHeaders(req),
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'tools/call',
+          id: ++_mcpCallId,
+          params: { name: tool, arguments: args },
+        }),
+        signal: AbortSignal.timeout(20000),
+      });
 
-  const json = await res.json();
+      if (!res.ok) {
+        const text = await res.text();
+        const isHtml = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html');
+        const detail = isHtml
+          ? `Gateway retornou ${res.status} (servidor MCP offline)`
+          : `Gateway retornou ${res.status}: ${text}`;
+        const err = new Error(detail);
+        err.statusCode = res.status;
+        throw err;
+      }
 
-  // JSON-RPC 2.0: desembrulha result/error
-  if (json.jsonrpc === '2.0') {
-    if (json.error) {
-      throw new Error(`MCP error ${json.error.code}: ${json.error.message}`);
+      const json = await res.json();
+
+      // JSON-RPC 2.0: desembrulha result/error
+      if (json.jsonrpc === '2.0') {
+        if (json.error) {
+          throw new Error(`MCP error ${json.error.code}: ${json.error.message}`);
+        }
+        return json.result;
+      }
+
+      return json;
+
+    } catch (err) {
+      lastError = err;
+      const retryable = err.statusCode === 502 || err.statusCode === 503 || err.code === 'UND_ERR_CONNECT_TIMEOUT' || err.name === 'TimeoutError';
+
+      if (retryable && attempt < MCP_MAX_RETRIES) {
+        const delay = MCP_RETRY_DELAYS[attempt] || 8000;
+        console.log(`[mcp] ${tool} falhou (${err.message}), retry ${attempt + 1}/${MCP_MAX_RETRIES} em ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
     }
-    return json.result;
   }
-
-  return json;
+  throw lastError;
 }
 
 // ─── Inicializa Transport Layer ────────────────────────────────────────
@@ -140,20 +165,43 @@ router.on('channel-failed', ({ channel, error }) => {
 });
 
 // ─── Monitor / Watchdog ────────────────────────────────────────────────
+const fs = require('fs');
+const path = require('path');
+
 const MONITOR_INTERVAL = parseInt(process.env.MONITOR_INTERVAL || '120000', 10); // 2 min
 const ALERT_PHONE     = process.env.ALERT_PHONE || '';  // ex: 5511999999999
 const SLOW_THRESHOLD  = parseInt(process.env.SLOW_THRESHOLD || '10000', 10); // 10s
+const MONITOR_STATE_PATH = path.join(__dirname, 'data', 'monitor-state.json');
 
-const monitorState = {
-  status: 'unknown',       // 'ok' | 'degraded' | 'offline'
-  lastCheck: null,
-  lastOk: null,
-  lastError: null,
-  errorMessage: null,
-  responseTime: null,
-  consecutiveFailures: 0,
-  alertSent: false,
-};
+function loadMonitorState() {
+  const defaults = {
+    status: 'unknown',
+    lastCheck: null,
+    lastOk: null,
+    lastError: null,
+    errorMessage: null,
+    responseTime: null,
+    consecutiveFailures: 0,
+    alertSent: false,
+  };
+  try {
+    if (fs.existsSync(MONITOR_STATE_PATH)) {
+      const saved = JSON.parse(fs.readFileSync(MONITOR_STATE_PATH, 'utf-8'));
+      return { ...defaults, ...saved };
+    }
+  } catch { /* usa defaults */ }
+  return defaults;
+}
+
+function saveMonitorState() {
+  try {
+    const dir = path.dirname(MONITOR_STATE_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(MONITOR_STATE_PATH, JSON.stringify(monitorState, null, 2));
+  } catch { /* best effort */ }
+}
+
+const monitorState = loadMonitorState();
 
 async function sendAlert(message) {
   if (!ALERT_PHONE) {
@@ -216,6 +264,7 @@ async function runHealthCheck() {
         monitorState.alertSent = true;
         await sendAlert(`Tulipa lenta — resposta em ${elapsed}ms (limite: ${SLOW_THRESHOLD}ms)`);
       }
+      saveMonitorState();
       return;
     }
 
@@ -232,6 +281,8 @@ async function runHealthCheck() {
       await sendAlert(`Tulipa voltou ao normal — resposta em ${elapsed}ms`);
     }
 
+    saveMonitorState();
+
   } catch (err) {
     const elapsed = Date.now() - start;
     monitorState.responseTime = elapsed;
@@ -247,6 +298,8 @@ async function runHealthCheck() {
       monitorState.alertSent = true;
       await sendAlert(`Tulipa OFFLINE — ${err.message} (${monitorState.consecutiveFailures} falhas consecutivas)`);
     }
+
+    saveMonitorState();
   }
 }
 
@@ -560,8 +613,12 @@ let monitorTimer = null;
 function startMonitor() {
   if (!MONITOR_INTERVAL || MONITOR_INTERVAL < 10000) return;
   console.log(`[monitor] Watchdog ativo — check a cada ${MONITOR_INTERVAL / 1000}s`);
-  if (ALERT_PHONE) console.log(`[monitor] Alertas para ***${ALERT_PHONE.slice(-4)}`);
-  else console.log('[monitor] ALERT_PHONE não configurado — alertas somente no console');
+  if (ALERT_PHONE) {
+    const channels = [...router._transports.keys()].join(' → ');
+    console.log(`[monitor] Alertas para ***${ALERT_PHONE.slice(-4)} via ${channels} (fallback automático)`);
+  } else {
+    console.log('[monitor] ALERT_PHONE não configurado — alertas somente no console');
+  }
 
   setTimeout(() => {
     runHealthCheck();
