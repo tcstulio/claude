@@ -825,6 +825,46 @@ app.post('/api/local-mcp', (req, res) => {
   res.json({ jsonrpc: '2.0', id, result });
 });
 
+// ─── Economy Dashboard (Sprint 8) ─────────────────────────────────────
+const { generateDashboard, verifyAsThirdParty } = require('./lib/ledger/dashboard');
+
+// Dashboard consolidado: saldo, top contribuidores, skills, peers
+app.get('/api/economy/dashboard', requireAuth, (_req, res) => {
+  const data = generateDashboard({
+    ledger,
+    trust: mesh.trust,
+    registry: mesh.registry,
+    nodeId: protocol.NODE_ID,
+  });
+  res.json(data);
+});
+
+// Verificação de receipt como terceiro (disputas)
+app.post('/api/economy/dispute', requireAuth, (req, res) => {
+  const { receipt: rcpt } = req.body;
+  if (!rcpt) return res.status(400).json({ error: 'Campo "receipt" é obrigatório' });
+
+  const result = verifyAsThirdParty(rcpt, {
+    registry: mesh.registry,
+    receiptLib,
+  });
+  res.json(result);
+});
+
+// Ranking econômico dos peers (trust × reputation × saldo)
+app.get('/api/economy/ranking', requireAuth, (req, res) => {
+  const skill = req.query.skill;
+  const peers = skill
+    ? mesh.registry.list({ capability: skill })
+    : mesh.registry.list();
+
+  const ranking = mesh.trust.rankForDelegation(peers, {
+    skill,
+    ledger,
+  });
+  res.json({ skill: skill || 'all', ranking });
+});
+
 // ─── Ledger Routes ────────────────────────────────────────────────────
 
 // Resumo do ledger (saldo, totais, por skill/peer)
