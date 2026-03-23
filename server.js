@@ -779,6 +779,101 @@ app.get('/api/network/crawl', (_req, res) => {
   res.json(mesh.crawler.cacheInfo());
 });
 
+// ─── Hub Council Routes ───────────────────────────────────────────────
+
+// Estado do hub neste nó
+app.get('/api/hub/status', (_req, res) => {
+  res.json({
+    nodeId: protocol.NODE_ID,
+    nodeName: protocol.NODE_NAME,
+    ...mesh.hubRole.toJSON(),
+  });
+});
+
+// Registry de todos os hubs conhecidos
+app.get('/api/hub/registry', (_req, res) => {
+  res.json(mesh.hubRegistry.toJSON());
+});
+
+// Council — propostas pendentes e histórico
+app.get('/api/hub/council', requireAuth, (_req, res) => {
+  res.json(mesh.hubCouncil.toJSON());
+});
+
+// Propor promoção/demoção
+app.post('/api/hub/propose', requireAuth, (req, res) => {
+  const { type, targetNodeId, reason } = req.body;
+  if (!type || !targetNodeId) {
+    return res.status(400).json({ error: 'Campos "type" e "targetNodeId" são obrigatórios' });
+  }
+  try {
+    const proposal = mesh.hubCouncil.propose(type, targetNodeId, reason || '');
+    res.json({ ok: true, proposal });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Votar em proposta
+app.post('/api/hub/vote', requireAuth, (req, res) => {
+  const { proposalId, vote, reason } = req.body;
+  if (!proposalId || !vote) {
+    return res.status(400).json({ error: 'Campos "proposalId" e "vote" são obrigatórios' });
+  }
+  try {
+    const result = mesh.hubCouncil.vote(proposalId, protocol.NODE_ID, vote, reason);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Forçar análise LLM do advisor
+app.post('/api/hub/evaluate', requireAuth, async (_req, res) => {
+  try {
+    const result = await mesh.hubAdvisor.analyze();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Último resultado da análise do advisor
+app.get('/api/hub/advisor', (_req, res) => {
+  res.json(mesh.hubAdvisor.toJSON());
+});
+
+// Receber heartbeat de outro hub (hub-to-hub, sem auth pesado)
+app.post('/api/hub/heartbeat', (req, res) => {
+  const { nodeId, metrics } = req.body;
+  if (!nodeId) return res.status(400).json({ error: 'nodeId required' });
+  const hub = mesh.hubRegistry.processHeartbeat(nodeId, metrics);
+  res.json({ ok: true, hub });
+});
+
+// Receber sync de registry (hub-to-hub)
+app.post('/api/hub/sync', (req, res) => {
+  const { hubs, epoch } = req.body;
+  if (!hubs) return res.status(400).json({ error: 'hubs required' });
+  const updated = mesh.hubRegistry.applySync(hubs, epoch);
+  res.json({ ok: true, updated, localEpoch: mesh.hubRegistry._epoch });
+});
+
+// Receber proposta/voto de eleição (hub-to-hub)
+app.post('/api/hub/election', (req, res) => {
+  try {
+    const result = mesh.hubCouncil.receiveProposal(req.body);
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Avaliação da rede (diagnóstico)
+app.get('/api/hub/network-eval', requireAuth, (_req, res) => {
+  res.json(mesh.hubCouncil.evaluateNetwork());
+});
+
 // ─── Federation Routes (Sprint 7) ─────────────────────────────────────
 
 // Busca federada por skill na rede

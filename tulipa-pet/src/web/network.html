@@ -73,6 +73,54 @@
         .loading { text-align: center; padding: 40px; color: var(--muted); }
         .pulse { animation: pulse 2s infinite; }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+        /* ─── Hub & Network Topology ─── */
+        .section-title { color: var(--muted); font-size: 0.85em; text-transform: uppercase; letter-spacing: 2px; margin: 28px 0 12px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+
+        .topology-canvas { width: 100%; height: 320px; background: var(--card); border: 1px solid var(--border); border-radius: 16px; margin-bottom: 16px; cursor: grab; }
+
+        .hub-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-bottom: 16px; }
+        .hub-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; position: relative; transition: border-color 0.3s; }
+        .hub-card:hover { border-color: var(--accent); }
+        .hub-card.active { border-left: 3px solid var(--green); }
+        .hub-card.suspect { border-left: 3px solid var(--yellow); }
+        .hub-card.dead { border-left: 3px solid var(--red); opacity: 0.5; }
+        .hub-card.leaf { border-left: 3px solid var(--muted); }
+        .hub-name { font-weight: bold; font-size: 1em; }
+        .hub-role { display: inline-block; padding: 1px 8px; border-radius: 8px; font-size: 0.7em; font-weight: bold; margin-left: 6px; }
+        .role-hub { background: rgba(76,175,80,0.15); color: var(--green); }
+        .role-leaf { background: rgba(139,148,158,0.15); color: var(--muted); }
+        .role-candidate { background: rgba(255,235,59,0.15); color: var(--yellow); }
+        .hub-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 8px; font-size: 0.75em; color: var(--muted); }
+        .hub-metric-val { color: var(--text); font-weight: 600; }
+        .hub-epoch { position: absolute; top: 10px; right: 12px; font-size: 0.7em; color: var(--muted); }
+
+        .council-section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+        .council-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .council-title { font-weight: bold; font-size: 0.95em; }
+        .proposal { padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.02); margin-bottom: 6px; border-left: 3px solid var(--blue); }
+        .proposal.approved { border-left-color: var(--green); }
+        .proposal.rejected { border-left-color: var(--red); }
+        .proposal.expired { border-left-color: var(--muted); opacity: 0.5; }
+        .proposal-votes { display: flex; gap: 8px; margin-top: 6px; font-size: 0.8em; }
+        .vote-approve { color: var(--green); }
+        .vote-reject { color: var(--red); }
+        .vote-bar { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; align-self: center; }
+        .vote-fill { height: 100%; background: var(--green); border-radius: 3px; transition: width 0.5s; }
+
+        .advisor-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 16px; }
+        .advisor-recommendation { padding: 8px; margin-top: 6px; border-radius: 6px; font-size: 0.85em; }
+        .rec-promote { background: rgba(76,175,80,0.08); border-left: 2px solid var(--green); padding-left: 10px; }
+        .rec-demote { background: rgba(244,67,54,0.08); border-left: 2px solid var(--red); padding-left: 10px; }
+        .confidence-bar { display: inline-block; width: 60px; height: 4px; background: var(--border); border-radius: 2px; margin-left: 6px; vertical-align: middle; }
+        .confidence-fill { height: 100%; border-radius: 2px; }
+
+        .tab-bar { display: flex; gap: 0; margin: 16px 0; border-bottom: 1px solid var(--border); }
+        .tab { padding: 8px 18px; cursor: pointer; color: var(--muted); font-size: 0.9em; border-bottom: 2px solid transparent; transition: all 0.2s; }
+        .tab:hover { color: var(--text); }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
     </style>
 </head>
 <body>
@@ -82,15 +130,65 @@
             <p class="subtitle">Todos os pets da rede Tulipa em tempo real</p>
         </header>
 
-        <div class="stats-bar">
-            <div class="stat"><div class="stat-value" id="totalPets">-</div><div class="stat-label">Pets</div></div>
-            <div class="stat"><div class="stat-value" id="onlinePets">-</div><div class="stat-label">Online</div></div>
-            <div class="stat"><div class="stat-value" id="avgScore">-</div><div class="stat-label">Score Medio</div></div>
-            <div class="stat"><div class="stat-value" id="totalFriendships">-</div><div class="stat-label">Amizades</div></div>
+        <div class="tab-bar">
+            <div class="tab active" data-tab="pets">Pets</div>
+            <div class="tab" data-tab="infra">Infraestrutura</div>
+            <div class="tab" data-tab="council">Hub Council</div>
         </div>
 
-        <div class="pets-grid" id="petsGrid">
-            <div class="loading pulse">Buscando pets na rede...</div>
+        <!-- ═══ TAB: PETS ═══ -->
+        <div class="tab-content active" id="tab-pets">
+            <div class="stats-bar">
+                <div class="stat"><div class="stat-value" id="totalPets">-</div><div class="stat-label">Pets</div></div>
+                <div class="stat"><div class="stat-value" id="onlinePets">-</div><div class="stat-label">Online</div></div>
+                <div class="stat"><div class="stat-value" id="avgScore">-</div><div class="stat-label">Score Medio</div></div>
+                <div class="stat"><div class="stat-value" id="totalFriendships">-</div><div class="stat-label">Amizades</div></div>
+            </div>
+
+            <div class="pets-grid" id="petsGrid">
+                <div class="loading pulse">Buscando pets na rede...</div>
+            </div>
+        </div>
+
+        <!-- ═══ TAB: INFRAESTRUTURA ═══ -->
+        <div class="tab-content" id="tab-infra">
+            <div class="stats-bar">
+                <div class="stat"><div class="stat-value" id="hubCount">-</div><div class="stat-label">Hubs</div></div>
+                <div class="stat"><div class="stat-value" id="nodeCount">-</div><div class="stat-label">Nós</div></div>
+                <div class="stat"><div class="stat-value" id="hubEpoch">-</div><div class="stat-label">Epoch</div></div>
+                <div class="stat"><div class="stat-value" id="myRole">-</div><div class="stat-label">Meu Papel</div></div>
+            </div>
+
+            <div class="section-title">Topologia da Rede</div>
+            <canvas class="topology-canvas" id="topologyCanvas"></canvas>
+
+            <div class="section-title">Nós da Rede</div>
+            <div class="hub-grid" id="hubGrid"></div>
+        </div>
+
+        <!-- ═══ TAB: HUB COUNCIL ═══ -->
+        <div class="tab-content" id="tab-council">
+            <div class="stats-bar">
+                <div class="stat"><div class="stat-value" id="councilActive">-</div><div class="stat-label">Hubs Ativos</div></div>
+                <div class="stat"><div class="stat-value" id="councilPending">-</div><div class="stat-label">Propostas</div></div>
+                <div class="stat"><div class="stat-value" id="councilQuorum">-</div><div class="stat-label">Quorum</div></div>
+                <div class="stat"><div class="stat-value" id="advisorStatus">-</div><div class="stat-label">Advisor</div></div>
+            </div>
+
+            <div class="section-title">Propostas</div>
+            <div class="council-section" id="councilProposals">
+                <div style="color:var(--muted);padding:10px;text-align:center">Nenhuma proposta ativa</div>
+            </div>
+
+            <div class="section-title">LLM Advisor</div>
+            <div class="advisor-card" id="advisorCard">
+                <div style="color:var(--muted)">Aguardando primeira análise...</div>
+            </div>
+
+            <div class="section-title">Histórico</div>
+            <div class="council-section" id="councilHistory">
+                <div style="color:var(--muted);padding:10px;text-align:center">Sem histórico</div>
+            </div>
         </div>
 
         <div class="events-section">
@@ -285,11 +383,387 @@
         ws.onclose = () => setTimeout(connectWS, 5000);
     }
 
+    // ═══ TAB SWITCHING ═══
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            tab.classList.add('active');
+            document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+            if (tab.dataset.tab === 'infra') fetchInfra();
+            if (tab.dataset.tab === 'council') fetchCouncil();
+        });
+    });
+
+    // ═══ INFRAESTRUTURA ═══
+    let infraData = { hubStatus: null, hubRegistry: null, meshState: null };
+
+    async function fetchInfra() {
+        try {
+            const [statusRes, registryRes, meshRes] = await Promise.all([
+                fetch('/api/hub/status').then(r => r.json()).catch(() => null),
+                fetch('/api/hub/registry').then(r => r.json()).catch(() => null),
+                fetch('/api/mesh').then(r => r.json()).catch(() => null),
+            ]);
+            infraData = { hubStatus: statusRes, hubRegistry: registryRes, meshState: meshRes };
+            renderInfra();
+        } catch (err) { console.error('Infra fetch error:', err); }
+    }
+
+    function renderInfra() {
+        const { hubStatus, hubRegistry, meshState } = infraData;
+        const hubs = hubRegistry?.hubs || [];
+        const peers = meshState?.registry?.peers || [];
+
+        // Stats
+        document.getElementById('hubCount').textContent = hubRegistry?.activeCount || 0;
+        document.getElementById('nodeCount').textContent = (peers.length || 0) + 1;
+        document.getElementById('hubEpoch').textContent = hubRegistry?.epoch || 0;
+        document.getElementById('myRole').textContent = hubStatus?.state || '?';
+
+        // Hub cards + peer cards
+        const grid = document.getElementById('hubGrid');
+        let html = '';
+
+        // Este nó (self)
+        if (hubStatus) {
+            const m = hubStatus.metrics || {};
+            html += `
+            <div class="hub-card ${hubStatus.state}">
+                <div class="hub-epoch">epoch ${hubStatus.epoch}</div>
+                <div class="hub-name">${meshState?.nodeName || 'Este Nó'}
+                    <span class="hub-role ${hubStatus.isHub ? 'role-hub' : 'role-leaf'}">${hubStatus.state.toUpperCase()}</span>
+                </div>
+                <div style="color:var(--muted);font-size:0.8em;margin-top:4px">${meshState?.nodeId || ''}</div>
+                <div class="hub-metrics">
+                    <div>CPU <span class="hub-metric-val">${m.cpu || 0}%</span></div>
+                    <div>RAM <span class="hub-metric-val">${m.memoryUsed || 0}%</span></div>
+                    <div>Load <span class="hub-metric-val">${(m.loadAvg || 0).toFixed(1)}</span></div>
+                    <div>Peers <span class="hub-metric-val">${peers.length}</span></div>
+                    <div>Req/min <span class="hub-metric-val">${m.requestsPerMin || 0}</span></div>
+                    <div>Uptime <span class="hub-metric-val">${formatUptime(m.uptime)}</span></div>
+                </div>
+            </div>`;
+        }
+
+        // Hubs remotos
+        for (const hub of hubs) {
+            if (hub.nodeId === meshState?.nodeId) continue;
+            const m = hub.metrics || {};
+            html += `
+            <div class="hub-card ${hub.state}">
+                <div class="hub-epoch">epoch ${hub.epoch || 0}</div>
+                <div class="hub-name">${hub.name}
+                    <span class="hub-role role-hub">${(hub.state || 'hub').toUpperCase()}</span>
+                </div>
+                <div style="color:var(--muted);font-size:0.8em;margin-top:4px">${hub.nodeId}</div>
+                <div class="hub-metrics">
+                    <div>CPU <span class="hub-metric-val">${m.cpu || '?'}%</span></div>
+                    <div>Peers <span class="hub-metric-val">${hub.peerCount || 0}</span></div>
+                    <div>Uptime <span class="hub-metric-val">${formatUptime(m.uptime)}</span></div>
+                </div>
+            </div>`;
+        }
+
+        // Peers que não são hubs
+        const hubIds = new Set(hubs.map(h => h.nodeId));
+        for (const peer of peers) {
+            if (hubIds.has(peer.nodeId)) continue;
+            html += `
+            <div class="hub-card leaf">
+                <div class="hub-name">${peer.name}
+                    <span class="hub-role role-leaf">LEAF</span>
+                </div>
+                <div style="color:var(--muted);font-size:0.8em;margin-top:4px">${peer.nodeId}</div>
+                <div class="hub-metrics">
+                    <div>Status <span class="hub-metric-val">${peer.status || '?'}</span></div>
+                    <div>Latency <span class="hub-metric-val">${peer.latency ? peer.latency + 'ms' : '?'}</span></div>
+                    <div>Canais <span class="hub-metric-val">${(peer.channels || []).length}</span></div>
+                </div>
+            </div>`;
+        }
+
+        grid.innerHTML = html || '<div style="color:var(--muted)">Nenhum nó encontrado</div>';
+
+        // Desenha topologia
+        drawTopology();
+    }
+
+    function formatUptime(ms) {
+        if (!ms) return '?';
+        const h = Math.floor(ms / 3600000);
+        if (h > 24) return Math.floor(h / 24) + 'd';
+        return h + 'h';
+    }
+
+    // ═══ TOPOLOGY CANVAS ═══
+    function drawTopology() {
+        const canvas = document.getElementById('topologyCanvas');
+        const ctx = canvas.getContext('2d');
+        const dpr = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.scale(dpr, dpr);
+        const W = rect.width, H = rect.height;
+
+        ctx.clearRect(0, 0, W, H);
+
+        const { hubStatus, hubRegistry, meshState } = infraData;
+        const hubs = hubRegistry?.hubs || [];
+        const peers = meshState?.registry?.peers || [];
+        const selfId = meshState?.nodeId;
+
+        // Todos os nós
+        const nodes = [];
+        const hubIds = new Set(hubs.map(h => h.nodeId));
+
+        // Self primeiro
+        nodes.push({ id: selfId || 'self', name: meshState?.nodeName || 'Self', isHub: hubStatus?.isHub, isSelf: true, state: hubStatus?.state || 'leaf' });
+        for (const hub of hubs) {
+            if (hub.nodeId === selfId) continue;
+            nodes.push({ id: hub.nodeId, name: hub.name, isHub: true, state: hub.state });
+        }
+        for (const peer of peers) {
+            if (hubIds.has(peer.nodeId) || peer.nodeId === selfId) continue;
+            nodes.push({ id: peer.nodeId, name: peer.name, isHub: false, state: peer.status || 'online' });
+        }
+
+        if (nodes.length === 0) {
+            ctx.fillStyle = '#8b949e';
+            ctx.font = '14px system-ui';
+            ctx.textAlign = 'center';
+            ctx.fillText('Nenhum nó na rede', W / 2, H / 2);
+            return;
+        }
+
+        // Layout: hubs em círculo interno, leaves em círculo externo
+        const hubNodes = nodes.filter(n => n.isHub);
+        const leafNodes = nodes.filter(n => !n.isHub);
+        const cx = W / 2, cy = H / 2;
+        const rHub = Math.min(W, H) * 0.2;
+        const rLeaf = Math.min(W, H) * 0.38;
+
+        // Posicionar hubs
+        hubNodes.forEach((n, i) => {
+            const a = (i / Math.max(hubNodes.length, 1)) * Math.PI * 2 - Math.PI / 2;
+            n.x = cx + Math.cos(a) * (hubNodes.length === 1 ? 0 : rHub);
+            n.y = cy + Math.sin(a) * (hubNodes.length === 1 ? 0 : rHub);
+        });
+
+        // Posicionar leaves
+        leafNodes.forEach((n, i) => {
+            const a = (i / Math.max(leafNodes.length, 1)) * Math.PI * 2 - Math.PI / 2;
+            n.x = cx + Math.cos(a) * rLeaf;
+            n.y = cy + Math.sin(a) * rLeaf;
+        });
+
+        // Desenhar conexões hub-hub
+        ctx.lineWidth = 2;
+        for (let i = 0; i < hubNodes.length; i++) {
+            for (let j = i + 1; j < hubNodes.length; j++) {
+                ctx.beginPath();
+                ctx.strokeStyle = 'rgba(76,175,80,0.3)';
+                ctx.setLineDash([6, 4]);
+                ctx.moveTo(hubNodes[i].x, hubNodes[i].y);
+                ctx.lineTo(hubNodes[j].x, hubNodes[j].y);
+                ctx.stroke();
+            }
+        }
+        ctx.setLineDash([]);
+
+        // Desenhar conexões leaf → hub mais próximo
+        ctx.lineWidth = 1;
+        for (const leaf of leafNodes) {
+            let closest = hubNodes[0] || nodes[0];
+            let minD = Infinity;
+            for (const h of hubNodes) {
+                const d = Math.hypot(h.x - leaf.x, h.y - leaf.y);
+                if (d < minD) { minD = d; closest = h; }
+            }
+            if (closest) {
+                ctx.beginPath();
+                ctx.strokeStyle = 'rgba(139,148,158,0.2)';
+                ctx.moveTo(leaf.x, leaf.y);
+                ctx.lineTo(closest.x, closest.y);
+                ctx.stroke();
+            }
+        }
+
+        // Desenhar nós
+        for (const n of nodes) {
+            const r = n.isHub ? 22 : 14;
+
+            // Glow para hubs
+            if (n.isHub && n.state === 'active') {
+                ctx.beginPath();
+                const grad = ctx.createRadialGradient(n.x, n.y, r, n.x, n.y, r * 2.5);
+                grad.addColorStop(0, 'rgba(76,175,80,0.15)');
+                grad.addColorStop(1, 'rgba(76,175,80,0)');
+                ctx.fillStyle = grad;
+                ctx.arc(n.x, n.y, r * 2.5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Círculo do nó
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+            if (n.isSelf) {
+                ctx.fillStyle = '#e91e63';
+            } else if (n.isHub) {
+                ctx.fillStyle = n.state === 'active' ? '#4caf50' : n.state === 'suspect' ? '#ffeb3b' : n.state === 'dead' ? '#f44336' : '#8b949e';
+            } else {
+                ctx.fillStyle = n.state === 'online' ? '#42a5f5' : '#30363d';
+            }
+            ctx.fill();
+
+            // Borda
+            ctx.strokeStyle = n.isSelf ? '#e91e63' : 'rgba(255,255,255,0.1)';
+            ctx.lineWidth = n.isSelf ? 2 : 1;
+            ctx.stroke();
+
+            // Ícone
+            ctx.font = `${n.isHub ? 14 : 10}px system-ui`;
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(n.isHub ? '⬡' : '●', n.x, n.y);
+
+            // Nome
+            ctx.font = '11px system-ui';
+            ctx.fillStyle = '#e6edf3';
+            ctx.textAlign = 'center';
+            ctx.fillText(n.name?.slice(0, 16) || n.id?.slice(0, 10), n.x, n.y + r + 14);
+
+            // Label de papel
+            if (n.isHub) {
+                ctx.font = '9px system-ui';
+                ctx.fillStyle = '#4caf50';
+                ctx.fillText('HUB', n.x, n.y + r + 25);
+            }
+        }
+
+        // Legenda
+        ctx.font = '10px system-ui';
+        ctx.textAlign = 'left';
+        const legend = [
+            { color: '#e91e63', label: 'Este nó' },
+            { color: '#4caf50', label: 'Hub ativo' },
+            { color: '#42a5f5', label: 'Peer/Leaf' },
+            { color: '#ffeb3b', label: 'Suspect' },
+            { color: '#f44336', label: 'Dead' },
+        ];
+        legend.forEach((l, i) => {
+            ctx.fillStyle = l.color;
+            ctx.beginPath();
+            ctx.arc(16, H - 60 + i * 14, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#8b949e';
+            ctx.fillText(l.label, 26, H - 57 + i * 14);
+        });
+    }
+
+    // ═══ COUNCIL ═══
+    async function fetchCouncil() {
+        try {
+            const [councilRes, advisorRes, registryRes] = await Promise.all([
+                fetch('/api/hub/council').then(r => r.ok ? r.json() : null).catch(() => null),
+                fetch('/api/hub/advisor').then(r => r.json()).catch(() => null),
+                fetch('/api/hub/registry').then(r => r.json()).catch(() => null),
+            ]);
+            renderCouncil(councilRes, advisorRes, registryRes);
+        } catch (err) { console.error('Council fetch error:', err); }
+    }
+
+    function renderCouncil(council, advisor, registry) {
+        // Stats
+        document.getElementById('councilActive').textContent = registry?.activeCount || 0;
+        document.getElementById('councilPending').textContent = council?.pendingProposals?.length || 0;
+        document.getElementById('councilQuorum').textContent = council?.config?.quorumRatio ? Math.round(council.config.quorumRatio * 100) + '%' : '?';
+        document.getElementById('advisorStatus').textContent = advisor?.running ? 'Ativo' : 'Parado';
+
+        // Propostas pendentes
+        const proposalsEl = document.getElementById('councilProposals');
+        const pending = council?.pendingProposals || [];
+        if (pending.length === 0) {
+            proposalsEl.innerHTML = '<div style="color:var(--muted);padding:10px;text-align:center">Nenhuma proposta ativa</div>';
+        } else {
+            proposalsEl.innerHTML = pending.map(p => renderProposal(p)).join('');
+        }
+
+        // Advisor
+        const advisorEl = document.getElementById('advisorCard');
+        if (advisor?.lastAnalysis) {
+            const a = advisor.lastAnalysis;
+            const recs = a.recommendations || [];
+            advisorEl.innerHTML = `
+                <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+                    <span style="font-weight:bold;font-size:0.9em">Última análise</span>
+                    <span style="color:var(--muted);font-size:0.8em">${a.method === 'llm' ? '🤖 LLM' : '📊 Heurística'} — ${new Date(a.timestamp).toLocaleTimeString()}</span>
+                </div>
+                ${recs.length === 0 ? '<div style="color:var(--muted)">Nenhuma recomendação</div>' :
+                recs.map(r => `
+                    <div class="advisor-recommendation rec-${r.action}">
+                        <strong>${r.action === 'promote' ? '⬆️' : '⬇️'} ${r.action.toUpperCase()}</strong>
+                        ${r.targetNodeId?.slice(0, 12) || ''}
+                        <span class="confidence-bar">
+                            <span class="confidence-fill" style="width:${(r.confidence || 0) * 100}%;background:${r.confidence > 0.7 ? 'var(--green)' : 'var(--yellow)'}"></span>
+                        </span>
+                        <span style="font-size:0.75em;color:var(--muted)">${Math.round((r.confidence || 0) * 100)}%</span>
+                        <div style="color:var(--muted);font-size:0.8em;margin-top:4px">${r.reason || ''}</div>
+                    </div>
+                `).join('')}
+            `;
+        } else {
+            advisorEl.innerHTML = '<div style="color:var(--muted)">Aguardando primeira análise...</div>';
+        }
+
+        // Histórico
+        const historyEl = document.getElementById('councilHistory');
+        const history = council?.history || [];
+        if (history.length === 0) {
+            historyEl.innerHTML = '<div style="color:var(--muted);padding:10px;text-align:center">Sem histórico</div>';
+        } else {
+            historyEl.innerHTML = history.slice().reverse().map(p => renderProposal(p)).join('');
+        }
+    }
+
+    function renderProposal(p) {
+        const votes = p.votes || {};
+        const approves = Object.values(votes).filter(v => v.vote === 'approve').length;
+        const rejects = Object.values(votes).filter(v => v.vote === 'reject').length;
+        const total = approves + rejects;
+        const pct = total > 0 ? Math.round((approves / total) * 100) : 0;
+
+        return `
+        <div class="proposal ${p.status}">
+            <div style="display:flex;justify-content:space-between">
+                <span><strong>${p.type === 'promote' ? '⬆️' : '⬇️'} ${p.type}</strong> ${p.targetNodeId?.slice(0, 16)}</span>
+                <span style="font-size:0.8em;color:var(--muted)">${p.status}</span>
+            </div>
+            <div style="color:var(--muted);font-size:0.8em;margin-top:4px">${p.reason || ''}</div>
+            <div class="proposal-votes">
+                <span class="vote-approve">✓ ${approves}</span>
+                <div class="vote-bar"><div class="vote-fill" style="width:${pct}%"></div></div>
+                <span class="vote-reject">✗ ${rejects}</span>
+            </div>
+        </div>`;
+    }
+
+    // ═══ RESIZE ═══
+    window.addEventListener('resize', () => {
+        if (document.getElementById('tab-infra').classList.contains('active')) drawTopology();
+    });
+
     // Init
     fetchAndRender();
     connectWS();
     renderEvents();
-    setInterval(fetchAndRender, 30000); // Atualiza a cada 30s
+    setInterval(fetchAndRender, 30000);
+    setInterval(() => {
+        if (document.getElementById('tab-infra').classList.contains('active')) fetchInfra();
+        if (document.getElementById('tab-council').classList.contains('active')) fetchCouncil();
+    }, 15000);
     </script>
 </body>
 </html>
