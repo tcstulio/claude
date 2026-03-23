@@ -16,6 +16,10 @@ const MessageQueueSQLite = require('./lib/queue-sqlite');
 const TaskEngine = require('./lib/task-engine');
 const Identity = require('./lib/identity');
 
+// ─── Fase 12: Métricas e Terminal ─────────────────────────────────────
+const Metrics = require('./lib/metrics');
+const Terminal = require('./lib/terminal');
+
 const app = express();
 
 const GATEWAY_URL = process.env.GATEWAY_URL || 'https://agent.coolgroove.com.br';
@@ -84,6 +88,19 @@ setInterval(() => {
 // Rate limit em todas as rotas API
 app.use('/api', rateLimit);
 
+// ─── Métricas e Terminal ──────────────────────────────────────────────
+const metrics = new Metrics({
+  collectInterval: parseInt(process.env.METRICS_INTERVAL || '30000', 10),
+  historySize: parseInt(process.env.METRICS_HISTORY || '360', 10),
+});
+const terminal = new Terminal();
+
+// Middleware: contabiliza requests HTTP nas métricas
+app.use((req, res, next) => {
+  metrics.trackHttpRequest();
+  next();
+});
+
 // ─── Autenticação do Dashboard ────────────────────────────────────────
 const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || process.env.TULIPA_TOKEN || '';
 
@@ -117,9 +134,11 @@ async function callMcpTool(tool, args = {}, req = null) {
     const detail = isHtml
       ? `Gateway retornou ${res.status} (servidor MCP offline)`
       : `Gateway retornou ${res.status}: ${text}`;
+    metrics.trackMcpCall(false);
     throw new Error(detail);
   }
 
+  metrics.trackMcpCall(true);
   return res.json();
 }
 
@@ -221,15 +240,17 @@ taskEngine.registerHandler('generic', async (task) => {
   return { received: task.description, input: task.input };
 });
 
-// Log de eventos do router
+// Log de eventos do router + tracking de métricas
 router.on('sent', ({ channel, destination }) => {
   console.log(`[router] Enviado via ${channel} para ${destination}`);
+  metrics.trackMessage(true);
 });
 router.on('queued', ({ destination, id }) => {
   console.log(`[router] Enfileirado ${id} para ${destination}`);
 });
 router.on('channel-failed', ({ channel, error }) => {
   console.log(`[router] Canal ${channel} falhou: ${error}`);
+  metrics.trackMessage(false);
 });
 
 // ─── Monitor / Watchdog ────────────────────────────────────────────────
@@ -718,14 +739,18 @@ app.delete('/api/services/:nodeId', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// Sweep: marca como offline nós sem heartbeat há mais de 5 min
+// Sweep: marca offline após 5 min, DELETA após 30 min sem heartbeat
 const SERVICE_STALE_MS = 5 * 60 * 1000;
+const SERVICE_DEAD_MS = 30 * 60 * 1000;
 setInterval(() => {
   const now = Date.now();
   for (const [nodeId, entry] of serviceRegistry) {
     if (nodeId === protocol.NODE_ID) continue; // não limpa a si mesmo
     const age = now - new Date(entry.lastHeartbeat).getTime();
-    if (age > SERVICE_STALE_MS) {
+    if (age > SERVICE_DEAD_MS) {
+      serviceRegistry.delete(nodeId);
+      console.log(`[registry] Nó ${entry.name || nodeId} removido (inativo há ${Math.round(age / 60000)}min)`);
+    } else if (age > SERVICE_STALE_MS) {
       entry.status = 'offline';
     }
   }
@@ -952,6 +977,85 @@ app.post('/api/identity/verify', (req, res) => {
   res.json({ valid });
 });
 
+// ─── Metrics endpoints ──────────────────────────────────────────────
+
+// Snapshot atual (coleta em tempo real)
+app.get('/api/metrics', async (_req, res) => {
+  try {
+    const snapshot = await metrics.collect();
+    res.json(snapshot);
+  } catch (err) {
+    res.status(500).json({ error: 'Falha ao coletar métricas', detail: err.message });
+  }
+});
+
+// Resumo com médias, picos e contadores
+app.get('/api/metrics/summary', (_req, res) => {
+  const summary = metrics.summary();
+  if (!summary) return res.json({ message: 'Ainda sem dados coletados', counters: metrics._tokens });
+  res.json(summary);
+});
+
+// Histórico de snapshots
+app.get('/api/metrics/history', (req, res) => {
+  const limit = req.query.limit ? parseInt(req.query.limit, 10) : 60;
+  res.json({ history: metrics.history(limit), total: metrics._history.length });
+});
+
+// Linha compacta para log/dashboard
+app.get('/api/metrics/compact', (_req, res) => {
+  res.json({ status: metrics.compact() });
+});
+
+// ─── Terminal (tmux) endpoints ──────────────────────────────────────
+
+// Snapshot completo de todos os painéis tmux
+app.get('/api/terminal/snapshot', async (req, res) => {
+  try {
+    const scrollback = req.query.scrollback ? parseInt(req.query.scrollback, 10) : 0;
+    const captureContent = req.query.content !== 'false';
+    const snap = await terminal.snapshot({ captureContent, scrollback });
+    res.json(snap);
+  } catch (err) {
+    res.status(500).json({ error: 'Falha ao capturar terminal', detail: err.message });
+  }
+});
+
+// Listar sessões tmux
+app.get('/api/terminal/sessions', async (_req, res) => {
+  const sessions = await terminal.listSessions();
+  res.json({ available: await terminal.isAvailable(), sessions });
+});
+
+// Listar painéis com comando atual (pane_current_command)
+app.get('/api/terminal/panes', async (_req, res) => {
+  const panes = await terminal.listPanes();
+  res.json({ available: await terminal.isAvailable(), panes });
+});
+
+// Capturar conteúdo de um painel específico
+app.get('/api/terminal/capture/:paneId', async (req, res) => {
+  try {
+    const scrollback = req.query.scrollback ? parseInt(req.query.scrollback, 10) : 0;
+    const result = await terminal.capturePane(req.params.paneId, { scrollback });
+    res.json(result || { error: 'tmux não disponível' });
+  } catch (err) {
+    res.status(500).json({ error: 'Falha ao capturar painel', detail: err.message });
+  }
+});
+
+// Comando atual de um painel
+app.get('/api/terminal/command/:paneId', async (req, res) => {
+  const result = await terminal.getCurrentCommand(req.params.paneId);
+  res.json(result || { error: 'tmux não disponível' });
+});
+
+// Histórico de snapshots (só sumários)
+app.get('/api/terminal/history', (req, res) => {
+  const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
+  res.json({ history: terminal.history(limit) });
+});
+
 // ─── Storage / Search endpoints ──────────────────────────────────────
 
 app.get('/api/storage/stats', (_req, res) => {
@@ -1002,7 +1106,7 @@ async function startServer() {
   }
 
   app.listen(PORT, () => {
-  console.log(`\nTulipa API v5.0 — SQLite + Tasks + Identity + Mesh`);
+  console.log(`\nTulipa API v6.0 — SQLite + Tasks + Identity + Mesh + Metrics + Terminal`);
   console.log(`Dashboard: http://localhost:${PORT}/`);
   console.log(`Gateway: ${GATEWAY_URL}`);
   console.log(`Node: ${protocol.NODE_ID} (${protocol.NODE_NAME})`);
@@ -1085,6 +1189,22 @@ async function startServer() {
   console.log('  POST /api/identity/verify     — verificar assinatura');
   console.log(`  Fingerprint: ${identity.fingerprint}`);
 
+  // Metrics
+  console.log('\n  Metrics:');
+  console.log('  GET  /api/metrics             — snapshot de recursos (CPU, mem, GPU)');
+  console.log('  GET  /api/metrics/summary     — resumo com médias e picos');
+  console.log('  GET  /api/metrics/history     — histórico de snapshots');
+  console.log('  GET  /api/metrics/compact     — linha compacta para dashboard');
+
+  // Terminal (tmux)
+  console.log('\n  Terminal:');
+  console.log('  GET  /api/terminal/snapshot   — snapshot completo dos painéis tmux');
+  console.log('  GET  /api/terminal/sessions   — listar sessões tmux');
+  console.log('  GET  /api/terminal/panes      — painéis com pane_current_command');
+  console.log('  GET  /api/terminal/capture/:id — capturar conteúdo de um painel');
+  console.log('  GET  /api/terminal/command/:id — comando atual de um painel');
+  console.log('  GET  /api/terminal/history    — histórico de snapshots');
+
   // Storage
   console.log('\n  Storage:');
   console.log('  GET  /api/storage/stats       — estatísticas do banco');
@@ -1103,12 +1223,16 @@ async function startServer() {
   taskEngine.start();
 
   startMonitor();
-  queue.start(5000);
+  queue.start(15000); // 15s (antes era 5s — desnecessariamente agressivo)
+  metrics.start();
+  terminal.isAvailable().then(ok => {
+    console.log(`[terminal] tmux: ${ok ? 'disponível' : 'não detectado'}`);
+  });
 
   // Log audit de startup
   if (storage && storage._adapter) {
     storage.log('system.startup', protocol.NODE_ID, null, {
-      version: '5.0',
+      version: '6.0',
       transports: [...router._transports.keys()],
       fingerprint: identity.fingerprint,
     });
