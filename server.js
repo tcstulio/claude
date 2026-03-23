@@ -124,7 +124,14 @@ async function callMcpTool(tool, args = {}, req = null) {
 }
 
 // ─── Inicializa Storage (SQLite) ──────────────────────────────────────
-const storage = new Storage();
+// Storage tenta better-sqlite3 (sync) primeiro; se não tiver, cai para sql.js (async)
+let storage;
+try {
+  storage = new Storage();
+  console.log('[storage] Usando better-sqlite3 (nativo)');
+} catch (_) {
+  storage = null; // será inicializado async no startup
+}
 
 // ─── Inicializa Identity (Ed25519) ────────────────────────────────────
 const identity = new Identity({
@@ -979,7 +986,13 @@ function startMonitor() {
   }, 10000);
 }
 
-app.listen(PORT, () => {
+async function startServer() {
+  // Se storage não foi inicializado sync (sem better-sqlite3), init async via sql.js
+  if (!storage) {
+    storage = await Storage.create();
+  }
+
+  app.listen(PORT, () => {
   console.log(`\nTulipa API v5.0 — SQLite + Tasks + Identity + Mesh`);
   console.log(`Dashboard: http://localhost:${PORT}/`);
   console.log(`Gateway: ${GATEWAY_URL}`);
@@ -1089,4 +1102,10 @@ app.listen(PORT, () => {
     transports: [...router._transports.keys()],
     fingerprint: identity.fingerprint,
   });
+  });
+}
+
+startServer().catch(err => {
+  console.error(`[startup] Falha ao iniciar: ${err.message}`);
+  process.exit(1);
 });
