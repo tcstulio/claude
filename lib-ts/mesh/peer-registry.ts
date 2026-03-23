@@ -1,40 +1,72 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { EventEmitter } = require('events');
+import { EventEmitter } from 'node:events';
 
-/**
- * PeerRegistry — mantém o mapa de peers conhecidos na rede Tulipa.
- *
- * Cada peer é identificado por nodeId e contém:
- *   - name, capabilities, channels, lastSeen, status
- *
- * Peers que não respondem dentro do TTL são marcados como stale/offline.
- */
-class PeerRegistry extends EventEmitter {
-  /**
-   * @param {object} options
-   * @param {number} options.staleTtl - ms sem atividade para marcar stale (default 5min)
-   * @param {number} options.deadTtl  - ms sem atividade para remover (default 15min)
-   * @param {number} options.sweepInterval - ms entre varreduras (default 60s)
-   */
-  constructor(options = {}) {
+export interface PeerInfo {
+  nodeId: string;
+  name: string;
+  capabilities: string[];
+  channels: string[];
+  endpoint: string | null;
+  lastSeen: number;
+  firstSeen: number;
+  status: 'online' | 'stale' | 'offline';
+  latency: number | null;
+  platform: string | null;
+  dataSources: Array<{ name: string; type: string; scope?: string | null }>;
+  metadata: Record<string, unknown>;
+}
+
+export interface PeerFilter {
+  status?: string;
+  capability?: string;
+  dataSource?: string;
+  platform?: string;
+}
+
+export interface PeerRegistryOptions {
+  staleTtl?: number;
+  deadTtl?: number;
+  sweepInterval?: number;
+}
+
+export interface PeerRegistryJSON {
+  count: number;
+  online: number;
+  peers: Array<{
+    nodeId: string;
+    name: string;
+    status: string;
+    channels: string[];
+    capabilities: string[];
+    platform: string | null;
+    dataSources: unknown[];
+    lastSeen: string;
+    latency: number | null;
+  }>;
+}
+
+export class PeerRegistry extends EventEmitter {
+  private _peers: Map<string, PeerInfo>;
+  private _staleTtl: number;
+  private _deadTtl: number;
+  private _sweepInterval: number;
+  private _sweepTimer: ReturnType<typeof setInterval> | null;
+
+  constructor(options: PeerRegistryOptions = {}) {
     super();
-    this._peers = new Map(); // nodeId -> PeerInfo
+    this._peers = new Map();
     this._staleTtl = options.staleTtl || 5 * 60 * 1000;
     this._deadTtl = options.deadTtl || 15 * 60 * 1000;
     this._sweepInterval = options.sweepInterval || 60 * 1000;
     this._sweepTimer = null;
   }
 
-  /**
-   * Registra ou atualiza um peer.
-   * Emite 'peer-joined' se é novo, 'peer-updated' se existente.
-   */
-  upsert(nodeId, info = {}) {
+  upsert(nodeId: string, info: Partial<PeerInfo> = {}): PeerInfo {
     const existing = this._peers.get(nodeId);
     const now = Date.now();
 
-    const peer = {
+    const peer: PeerInfo = {
       nodeId,
       name: info.name || existing?.name || nodeId,
       capabilities: info.capabilities || existing?.capabilities || [],
@@ -60,10 +92,7 @@ class PeerRegistry extends EventEmitter {
     return peer;
   }
 
-  /**
-   * Marca peer como visto agora (heartbeat).
-   */
-  touch(nodeId) {
+  touch(nodeId: string): PeerInfo | undefined {
     const peer = this._peers.get(nodeId);
     if (peer) {
       peer.lastSeen = Date.now();
@@ -72,15 +101,15 @@ class PeerRegistry extends EventEmitter {
     return peer;
   }
 
-  get(nodeId) {
+  get(nodeId: string): PeerInfo | null {
     return this._peers.get(nodeId) || null;
   }
 
-  has(nodeId) {
+  has(nodeId: string): boolean {
     return this._peers.has(nodeId);
   }
 
-  remove(nodeId) {
+  remove(nodeId: string): boolean {
     const peer = this._peers.get(nodeId);
     if (peer) {
       this._peers.delete(nodeId);
@@ -90,39 +119,30 @@ class PeerRegistry extends EventEmitter {
     return !!peer;
   }
 
-  /**
-   * Lista todos os peers, opcionalmente filtrados por status.
-   */
-  list(filter) {
+  list(filter?: PeerFilter): PeerInfo[] {
     let peers = [...this._peers.values()];
     if (filter?.status) peers = peers.filter(p => p.status === filter.status);
-    if (filter?.capability) peers = peers.filter(p => p.capabilities.includes(filter.capability));
+    if (filter?.capability) peers = peers.filter(p => p.capabilities.includes(filter.capability!));
     if (filter?.dataSource) peers = peers.filter(p => (p.dataSources || []).some(ds => ds.name === filter.dataSource));
     if (filter?.platform) peers = peers.filter(p => p.platform === filter.platform);
     return peers;
   }
 
-  get size() {
+  get size(): number {
     return this._peers.size;
   }
 
-  online() {
+  online(): PeerInfo[] {
     return this.list({ status: 'online' });
   }
 
-  /**
-   * Encontra peers que suportam um canal específico (whatsapp, telegram, etc).
-   */
-  withChannel(channel) {
+  withChannel(channel: string): PeerInfo[] {
     return [...this._peers.values()].filter(p =>
       p.status === 'online' && p.channels.includes(channel)
     );
   }
 
-  /**
-   * Varredura periódica: marca stale e remove dead.
-   */
-  _sweep() {
+  private _sweep(): void {
     const now = Date.now();
     for (const [nodeId, peer] of this._peers) {
       const age = now - peer.lastSeen;
@@ -137,19 +157,19 @@ class PeerRegistry extends EventEmitter {
     }
   }
 
-  startSweep() {
+  startSweep(): void {
     if (this._sweepTimer) return;
     this._sweepTimer = setInterval(() => this._sweep(), this._sweepInterval);
   }
 
-  stopSweep() {
+  stopSweep(): void {
     if (this._sweepTimer) {
       clearInterval(this._sweepTimer);
       this._sweepTimer = null;
     }
   }
 
-  toJSON() {
+  toJSON(): PeerRegistryJSON {
     return {
       count: this._peers.size,
       online: this.online().length,
@@ -168,4 +188,4 @@ class PeerRegistry extends EventEmitter {
   }
 }
 
-module.exports = PeerRegistry;
+export default PeerRegistry;
