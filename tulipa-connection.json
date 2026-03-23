@@ -1,0 +1,32 @@
+{
+  "network": "tulipa",
+  "endpoint": "https://agent.coolgroove.com.br",
+  "agent": {
+    "id": "agent_00726da6-5b9e-4d63-afcd-2f04c9572ebc",
+    "name": "Tulipa #1",
+    "hubMode": true
+  },
+  "api": {
+    "health": "GET /api/health",
+    "tokens": "GET /api/tokens",
+    "tasks": "GET /api/tasks",
+    "message": "POST /api/message",
+    "mcp": "POST /mcp"
+  },
+  "mcp_tools": [
+    "get_status",
+    "get_network_identity",
+    "list_peers",
+    "list_tasks",
+    "list_tokens",
+    "create_token",
+    "revoke_token",
+    "run_command",
+    "send_prompt",
+    "get_logs",
+    "send_whatsapp",
+    "get_whatsapp_history"
+  ],
+  "owner": "Tulio Silva <tcstulio@gmail.com>",
+  "connected_at": "2026-03-22T22:07:00Z"
+}
