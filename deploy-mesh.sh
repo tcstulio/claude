@@ -47,7 +47,7 @@ TULIPA_TOKEN=
 
 # Servidor
 PORT=3000
-NODE_NAME=Tulipa Android
+NODE_NAME="Tulipa Android"
 
 # Monitor
 MONITOR_INTERVAL=120000
