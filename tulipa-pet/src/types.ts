@@ -40,6 +40,31 @@ export interface SensorData {
   tasksCompleted?: number;
   tunnelUp?: boolean;
   lastInteraction?: number;
+
+  // Economy counters (from /api/metrics/sensors)
+  mcpCalls?: number;
+  mcpErrors?: number;
+  messagesRouted?: number;
+  messagesFailed?: number;
+  httpRequests?: number;
+  tasksFailed?: number;
+
+  // Peaks / watermarks
+  peakCpuPercent?: number;
+  peakMemoryRss?: number;
+  peakGpuPercent?: number;
+
+  // Process-level
+  processRss?: number;
+  processHeapUsed?: number;
+
+  // Terminal (tmux)
+  terminalAvailable?: boolean;
+  terminalPanes?: number;
+  terminalActivePanes?: number;
+  terminalCommands?: string[];
+  terminalMoodBoost?: number;
+  terminalEnergyDrain?: number;
 }
 
 export interface McpContent {

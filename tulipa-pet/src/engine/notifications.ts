@@ -252,6 +252,29 @@ export class NotificationManager {
 
     const interactionCount = todayEvents.filter(e => e.type === 'interaction').length;
 
+    // Economy data from last sensors
+    const sensors = this.petManager.getLastSensors();
+    const economyLines = [];
+    if (sensors.mcpCalls !== undefined) {
+      const errRate = sensors.mcpCalls > 0
+        ? `(${((sensors.mcpErrors || 0) / sensors.mcpCalls * 100).toFixed(1)}% erro)`
+        : '';
+      economyLines.push(`⚙️ MCP: ${sensors.mcpCalls} chamadas ${errRate}`);
+    }
+    if (sensors.messagesRouted !== undefined) {
+      economyLines.push(`📨 Mensagens roteadas: ${sensors.messagesRouted}`);
+    }
+    if (sensors.cpuUsage !== undefined) {
+      economyLines.push(`🖥️ CPU: ${sensors.cpuUsage}%${sensors.peakCpuPercent ? ` (pico: ${Math.round(sensors.peakCpuPercent)}%)` : ''}`);
+    }
+    if (sensors.processRss !== undefined) {
+      const mb = Math.round(sensors.processRss / (1024 * 1024));
+      economyLines.push(`🧠 RAM processo: ${mb}MB`);
+    }
+    const economySection = economyLines.length > 0
+      ? `\n*Economia:*\n${economyLines.join('\n')}`
+      : '';
+
     const message = [
       `🌅 Bom dia! Aqui é o ${snapshot.name}!`,
       ``,
@@ -267,6 +290,7 @@ export class NotificationManager {
       `🎯 Score geral: ${snapshot.overallScore}%`,
       `🤝 Interações hoje: ${interactionCount}`,
       achievementsLine,
+      economySection,
       ``,
       `Me cuida! 🌷`,
     ].filter(line => line !== undefined).join('\n');

@@ -1075,6 +1075,59 @@ app.get('/api/metrics/compact', (_req, res) => {
   res.json({ status: metrics.compact() });
 });
 
+// Métricas no formato SensorReadings (para o tulipa-pet consumir)
+app.get('/api/metrics/sensors', async (_req, res) => {
+  try {
+    const snapshot = await metrics.collect();
+    const counters = metrics._tokens;
+
+    const sensors = {
+      // Hardware
+      cpuUsage: Math.round(snapshot.cpu.system),
+      memoryUsage: Math.round(snapshot.memory.system.usedPercent),
+      loadAverage: snapshot.cpu.loadAvg[0],
+      uptimeHours: Math.round(snapshot.uptime.process / 3600),
+      hourOfDay: new Date().getHours(),
+
+      // GPU (se disponível)
+      gpuUsage: snapshot.gpu[0]?.utilization ?? undefined,
+      gpuTemperature: snapshot.gpu[0]?.temperature ?? undefined,
+      gpuMemoryUsage: snapshot.gpu[0]?.memory?.usedPercent ?? undefined,
+      temperature: snapshot.gpu[0]?.temperature ?? undefined,
+
+      // Simulação de bateria para servidor (CPU livre)
+      battery: Math.round((100 - snapshot.cpu.system) * 0.7 + 30),
+
+      // Contadores de economia (novos sensores)
+      mcpCalls: counters.mcpCalls,
+      mcpErrors: counters.mcpErrors,
+      messagesRouted: counters.messagesRouted,
+      messagesFailed: counters.messagesFailed,
+      httpRequests: counters.httpRequests,
+      tasksCompleted: counters.tasksCompleted,
+      tasksFailed: counters.tasksFailed,
+
+      // Picos (watermarks)
+      peakCpuPercent: snapshot.peaks.cpuPercent,
+      peakMemoryRss: snapshot.peaks.memoryRss,
+      peakGpuPercent: snapshot.peaks.gpuPercent,
+
+      // Processo Node.js
+      processRss: snapshot.memory.process.rss,
+      processHeapUsed: snapshot.memory.process.heapUsed,
+    };
+
+    // Remove undefined values
+    const clean = Object.fromEntries(
+      Object.entries(sensors).filter(([_, v]) => v !== undefined)
+    );
+
+    res.json(clean);
+  } catch (err) {
+    res.status(500).json({ error: 'Falha ao coletar sensores', detail: err.message });
+  }
+});
+
 // ─── Terminal (tmux) endpoints ──────────────────────────────────────
 
 // Snapshot completo de todos os painéis tmux
@@ -1268,6 +1321,7 @@ async function startServer() {
   console.log('  GET  /api/metrics/summary     — resumo com médias e picos');
   console.log('  GET  /api/metrics/history     — histórico de snapshots');
   console.log('  GET  /api/metrics/compact     — linha compacta para dashboard');
+  console.log('  GET  /api/metrics/sensors     — formato SensorReadings (pet)');
 
   // Terminal (tmux)
   console.log('\n  Terminal:');
