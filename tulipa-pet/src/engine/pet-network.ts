@@ -9,6 +9,8 @@ import { EventEmitter } from 'events';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import type { PetManager } from './pet-manager.js';
+import type { PetSnapshot, NeedKey } from './pet-state.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', '..', 'data');
@@ -23,10 +25,76 @@ const HUMOR_BOOST = 8;
 const GIFT_BOOST = 15;
 const FRIENDSHIP_PER_ENCOUNTER = 1;
 
+// ── Interfaces ────────────────────────────────────────────────
+
+export interface Friendship {
+  level: number;
+  encounters: number;
+  lastEncounter: number;
+  peerName: string;
+  gifts: { sent: number; received: number };
+}
+
+export interface PeerPet {
+  snapshot: PetSnapshot;
+  lastSeen: number;
+}
+
+export interface NetworkPetInfo {
+  peerId: string;
+  snapshot: PetSnapshot | null;
+  lastSeen: number;
+  online?: boolean;
+  friendship: Friendship;
+}
+
+export interface PeerUpdateEvent {
+  peerId: string;
+  snapshot: PetSnapshot;
+  friendship: Friendship;
+  isNew: boolean;
+}
+
+export interface SendGiftResult {
+  ok: boolean;
+  message: string;
+  friendship: Friendship;
+}
+
+interface PetBroadcast {
+  type: string;
+  version: number;
+  timestamp: number;
+  pet: PetSnapshot;
+}
+
+interface McpJsonRpcResponse {
+  jsonrpc: string;
+  id: number;
+  result?: {
+    content?: unknown;
+    [key: string]: unknown;
+  };
+  error?: {
+    code: number;
+    message: string;
+  };
+}
+
+interface TaskItem {
+  content?: string;
+  prompt?: string;
+  message?: string;
+  data?: string;
+  [key: string]: unknown;
+}
+
+// ── MCP helper ────────────────────────────────────────────────
+
 /**
  * Call a Tulipa MCP tool via JSON-RPC 2.0.
  */
-async function mcpCall(method, toolName, args = {}) {
+async function mcpCall(method: string, toolName: string, args: Record<string, unknown> = {}): Promise<McpJsonRpcResponse> {
   const res = await fetch(`${TULIPA_ENDPOINT}/mcp`, {
     method: 'POST',
     headers: {
@@ -45,14 +113,20 @@ async function mcpCall(method, toolName, args = {}) {
     throw new Error(`MCP call failed: ${res.status} ${res.statusText}`);
   }
 
-  return res.json();
+  return res.json() as Promise<McpJsonRpcResponse>;
 }
 
 export class PetNetwork extends EventEmitter {
-  constructor(petManager) {
+  petManager: PetManager;
+  peers: Map<string, PeerPet>;
+  friendships: Record<string, Friendship>;
+  private _timers: ReturnType<typeof setInterval>[];
+  private _running: boolean;
+
+  constructor(petManager: PetManager) {
     super();
     this.petManager = petManager;
-    this.peers = new Map();         // peerId -> { snapshot, lastSeen }
+    this.peers = new Map();
     this.friendships = this._loadFriendships();
     this._timers = [];
     this._running = false;
@@ -60,7 +134,7 @@ export class PetNetwork extends EventEmitter {
 
   // ── Lifecycle ────────────────────────────────────────────────
 
-  start() {
+  start(): void {
     if (this._running) return;
     this._running = true;
 
@@ -74,7 +148,7 @@ export class PetNetwork extends EventEmitter {
     console.log(`🌐 Pet network started (sync every ${SYNC_INTERVAL / 1000}s)`);
   }
 
-  stop() {
+  stop(): void {
     this._running = false;
     this._timers.forEach(t => clearInterval(t));
     this._timers = [];
@@ -84,12 +158,12 @@ export class PetNetwork extends EventEmitter {
 
   // ── Main sync cycle ──────────────────────────────────────────
 
-  async _syncCycle() {
+  private async _syncCycle(): Promise<void> {
     try {
       await this.broadcastState();
       await this.discoverPeers();
     } catch (err) {
-      console.error('Network sync error:', err.message);
+      console.error('Network sync error:', (err as Error).message);
     }
   }
 
@@ -99,7 +173,7 @@ export class PetNetwork extends EventEmitter {
    * Send own pet snapshot to the Tulipa network via MCP `send_prompt`.
    * Other agents can pick this up from the task system.
    */
-  async broadcastState() {
+  async broadcastState(): Promise<void> {
     const snapshot = this.petManager.getSnapshot();
     const payload = JSON.stringify({
       type: 'tulipa-pet-state',
@@ -113,7 +187,7 @@ export class PetNetwork extends EventEmitter {
         prompt: `[TULIPA-PET-BROADCAST] ${payload}`,
       });
     } catch (err) {
-      console.error('Broadcast error:', err.message);
+      console.error('Broadcast error:', (err as Error).message);
     }
   }
 
@@ -122,7 +196,7 @@ export class PetNetwork extends EventEmitter {
   /**
    * Query the Tulipa network for other pets using list_peers and list_tasks.
    */
-  async discoverPeers() {
+  async discoverPeers(): Promise<void> {
     try {
       // Get peers on the network
       const peersRes = await mcpCall('tools/call', 'list_peers', {});
@@ -133,7 +207,7 @@ export class PetNetwork extends EventEmitter {
       const tasks = tasksRes?.result?.content || tasksRes?.result || [];
 
       // Extract pet states from task data
-      const petBroadcasts = this._extractPetBroadcasts(tasks);
+      const petBroadcasts = this._extractPetBroadcasts(tasks as TaskItem[]);
 
       // Also try to identify peers that may have pets
       const peerList = Array.isArray(peers) ? peers : [];
@@ -148,7 +222,7 @@ export class PetNetwork extends EventEmitter {
 
         const peerId = pet.agentId;
         const wasKnown = this.peers.has(peerId);
-        const prevSeen = wasKnown ? this.peers.get(peerId).lastSeen : 0;
+        const prevSeen = wasKnown ? this.peers.get(peerId)!.lastSeen : 0;
 
         // Update peer record
         this.peers.set(peerId, {
@@ -171,7 +245,7 @@ export class PetNetwork extends EventEmitter {
           snapshot: pet,
           friendship: this.friendships[peerId] || { level: 0, encounters: 0 },
           isNew: !wasKnown,
-        });
+        } satisfies PeerUpdateEvent);
       }
 
       // Prune stale peers (not seen in 10 minutes)
@@ -183,15 +257,15 @@ export class PetNetwork extends EventEmitter {
       }
 
     } catch (err) {
-      console.error('Discovery error:', err.message);
+      console.error('Discovery error:', (err as Error).message);
     }
   }
 
   /**
    * Parse pet broadcast messages from the Tulipa task system.
    */
-  _extractPetBroadcasts(tasks) {
-    const broadcasts = [];
+  private _extractPetBroadcasts(tasks: unknown): PetBroadcast[] {
+    const broadcasts: PetBroadcast[] = [];
     const items = Array.isArray(tasks) ? tasks : [];
 
     for (const task of items) {
@@ -199,7 +273,7 @@ export class PetNetwork extends EventEmitter {
         // Tasks may have different shapes; look for pet broadcast marker
         const content = typeof task === 'string'
           ? task
-          : (task.content || task.prompt || task.message || task.data || '');
+          : ((task as TaskItem).content || (task as TaskItem).prompt || (task as TaskItem).message || (task as TaskItem).data || '');
 
         const str = typeof content === 'string' ? content : JSON.stringify(content);
 
@@ -208,7 +282,7 @@ export class PetNetwork extends EventEmitter {
         if (idx === -1) continue;
 
         const jsonStr = str.slice(idx + marker.length).trim();
-        const data = JSON.parse(jsonStr);
+        const data = JSON.parse(jsonStr) as PetBroadcast;
 
         if (data.type === 'tulipa-pet-state' && data.pet) {
           broadcasts.push(data);
@@ -227,7 +301,7 @@ export class PetNetwork extends EventEmitter {
    * When two pets are online simultaneously, boost their social/humor
    * and update friendship levels.
    */
-  _handleSocialInteraction(peerId, peerSnapshot) {
+  private _handleSocialInteraction(peerId: string, peerSnapshot: PetSnapshot): void {
     // Initialize friendship if needed
     if (!this.friendships[peerId]) {
       this.friendships[peerId] = {
@@ -294,8 +368,8 @@ export class PetNetwork extends EventEmitter {
    * Send a gift to a peer pet — boosts a specific need of the other pet.
    * The gift is delivered via MCP send_prompt so the peer can process it.
    */
-  async sendGift(peerId, needKey) {
-    const validNeeds = ['energia', 'limpeza', 'saude', 'seguranca', 'humor', 'social'];
+  async sendGift(peerId: string, needKey: NeedKey): Promise<SendGiftResult> {
+    const validNeeds: NeedKey[] = ['energia', 'limpeza', 'saude', 'seguranca', 'humor', 'social'];
     if (!validNeeds.includes(needKey)) {
       throw new Error(`Invalid need key: ${needKey}. Valid: ${validNeeds.join(', ')}`);
     }
@@ -359,27 +433,27 @@ export class PetNetwork extends EventEmitter {
 
   // ── Friendships ──────────────────────────────────────────────
 
-  getFriendships() {
+  getFriendships(): Record<string, Friendship> {
     return { ...this.friendships };
   }
 
-  _loadFriendships() {
+  private _loadFriendships(): Record<string, Friendship> {
     try {
       if (existsSync(FRIENDSHIPS_FILE)) {
         return JSON.parse(readFileSync(FRIENDSHIPS_FILE, 'utf-8'));
       }
     } catch (err) {
-      console.error('Failed to load friendships:', err.message);
+      console.error('Failed to load friendships:', (err as Error).message);
     }
     return {};
   }
 
-  _saveFriendships() {
+  private _saveFriendships(): void {
     try {
       if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
       writeFileSync(FRIENDSHIPS_FILE, JSON.stringify(this.friendships, null, 2));
     } catch (err) {
-      console.error('Failed to save friendships:', err.message);
+      console.error('Failed to save friendships:', (err as Error).message);
     }
   }
 
@@ -388,8 +462,8 @@ export class PetNetwork extends EventEmitter {
   /**
    * Return all discovered peers with friendship data for the API.
    */
-  getNetworkPets() {
-    const result = [];
+  getNetworkPets(): NetworkPetInfo[] {
+    const result: NetworkPetInfo[] = [];
     for (const [peerId, peer] of this.peers) {
       result.push({
         peerId,

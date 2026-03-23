@@ -8,6 +8,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import type { PetManager } from './pet-manager.js';
+import type { PetState, PetSnapshot, SensorReadings, NeedKey } from './pet-state.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', '..', 'data');
@@ -15,15 +17,36 @@ const NOTIFICATIONS_FILE = join(DATA_DIR, 'notifications.json');
 
 const TULIPA_ENDPOINT = process.env.TULIPA_ENDPOINT || 'https://agent.coolgroove.com.br';
 const TULIPA_TOKEN = process.env.TULIPA_TOKEN;
-const OWNER_PHONE = process.env.TULIPA_OWNER_PHONE || null; // null = use default from network owner
+const OWNER_PHONE = process.env.TULIPA_OWNER_PHONE || null;
 
 // Rate limiting
 const MAX_PER_NEED_MS = 60 * 60 * 1000;   // 1 hour between same-need alerts
 const MAX_DAILY_MESSAGES = 10;
 const HISTORY_MAX = 50;
 
+// ── Interfaces ────────────────────────────────────────────────
+
+export interface NotificationHistoryEntry {
+  time: string;
+  category: string;
+  message: string;
+  sent: boolean;
+}
+
+interface NotificationPersistedState {
+  history?: NotificationHistoryEntry[];
+  lastNotification?: Record<string, number>;
+  dailyCount?: number;
+  dailyCountDate?: string;
+}
+
+type CriticalMessageFn = (value: number, sensors?: SensorReadings) => string;
+type RecoveryMessageFn = (value: number) => string;
+
+// ── Message templates ─────────────────────────────────────────
+
 // Critical need message templates — fun first-person pet messages
-const CRITICAL_MESSAGES = {
+const CRITICAL_MESSAGES: Record<NeedKey, CriticalMessageFn> = {
   energia: (value) => {
     const msgs = [
       `⚡ Minha energia tá em ${value}%! Me ajuda!`,
@@ -79,7 +102,7 @@ const CRITICAL_MESSAGES = {
   },
 };
 
-const RECOVERY_MESSAGES = {
+const RECOVERY_MESSAGES: Record<NeedKey, RecoveryMessageFn> = {
   energia:   (value) => `😊 Me recuperei! Energia de volta a ${value}%! Tô ligadão! ⚡`,
   saude:     (value) => `😊 Me recuperei! Saúde de volta a ${value}%! Tô me sentindo ótimo! ❤️`,
   seguranca: (value) => `😊 Segurança restaurada! Tô em ${value}% agora. Pode ficar tranquilo! 🛡️`,
@@ -89,27 +112,40 @@ const RECOVERY_MESSAGES = {
 };
 
 export class NotificationManager {
-  /**
-   * @param {import('./pet-manager.js').PetManager} petManager
-   */
-  constructor(petManager) {
+  petManager: PetManager;
+  pet: PetState;
+  history: NotificationHistoryEntry[];
+  lastNotification: Record<string, number>;
+  dailyCount: number;
+  dailyCountDate: string;
+  dailySummaryHour: number;
+
+  private _running: boolean;
+  private _timers: ReturnType<typeof setInterval>[];
+  private _previousNeeds: Record<string, number>;
+  private _wasCritical: Set<string>;
+  private _knownPeers: Set<string>;
+  private _onUpdate: ((snapshot: PetSnapshot) => void) | null;
+
+  constructor(petManager: PetManager) {
     this.petManager = petManager;
     this.pet = petManager.pet;
 
     // State
     this._running = false;
     this._timers = [];
-    this._previousNeeds = {};        // track need values for recovery detection
-    this._wasCritical = new Set();   // needs that were critical last check
-    this._knownPeers = new Set();    // peers we already announced
+    this._previousNeeds = {};
+    this._wasCritical = new Set();
+    this._knownPeers = new Set();
+    this._onUpdate = null;
 
     // Load persisted state
     const saved = this._load();
     this.history = saved.history || [];
-    this.lastNotification = saved.lastNotification || {};  // category -> timestamp
+    this.lastNotification = saved.lastNotification || {};
     this.dailyCount = saved.dailyCount || 0;
     this.dailyCountDate = saved.dailyCountDate || this._todayStr();
-    this.dailySummaryHour = parseInt(process.env.TULIPA_SUMMARY_HOUR, 10) || 9;
+    this.dailySummaryHour = parseInt(process.env.TULIPA_SUMMARY_HOUR ?? '', 10) || 9;
 
     // Snapshot current needs so first tick doesn't fire false recoveries
     this._snapshotNeeds();
@@ -117,12 +153,12 @@ export class NotificationManager {
 
   // ── Lifecycle ──────────────────────────────────────────────
 
-  start() {
+  start(): void {
     if (this._running) return;
     this._running = true;
 
     // Listen to pet updates
-    this._onUpdate = (snapshot) => this._checkSnapshot(snapshot);
+    this._onUpdate = (snapshot: PetSnapshot) => this._checkSnapshot(snapshot);
     this.petManager.on('update', this._onUpdate);
 
     // Daily summary scheduler — check every minute
@@ -135,7 +171,7 @@ export class NotificationManager {
     console.log(`   Daily summary at ${this.dailySummaryHour}:00`);
   }
 
-  stop() {
+  stop(): void {
     this._running = false;
     this._timers.forEach(t => clearInterval(t));
     this._timers = [];
@@ -151,11 +187,9 @@ export class NotificationManager {
 
   /**
    * Send a notification with rate limiting.
-   * @param {string} category - e.g. 'critical:energia', 'recovery:saude', 'achievement', 'social'
-   * @param {string} message - the message to send
-   * @returns {Promise<boolean>} true if sent, false if rate-limited
+   * @returns true if sent, false if rate-limited
    */
-  async notify(category, message) {
+  async notify(category: string, message: string): Promise<boolean> {
     // Reset daily counter if new day
     if (this._todayStr() !== this.dailyCountDate) {
       this.dailyCount = 0;
@@ -190,7 +224,7 @@ export class NotificationManager {
   /**
    * Force send daily summary (bypasses rate limiting, doesn't count toward daily limit).
    */
-  async sendDailySummary() {
+  async sendDailySummary(): Promise<boolean> {
     const snapshot = this.petManager.getSnapshot();
     const age = snapshot.age;
     const mood = snapshot.mood;
@@ -198,7 +232,7 @@ export class NotificationManager {
 
     // Build needs summary
     const needsLines = Object.entries(snapshot.needs)
-      .map(([key, n]) => {
+      .map(([_key, n]) => {
         const bar = this._progressBar(n.value);
         return `${n.icon} ${n.label}: ${bar} ${n.value}%`;
       })
@@ -246,13 +280,13 @@ export class NotificationManager {
   /**
    * Get last 50 notification records.
    */
-  getNotificationHistory() {
+  getNotificationHistory(): NotificationHistoryEntry[] {
     return this.history.slice(0, HISTORY_MAX);
   }
 
   // ── Monitoring Logic ───────────────────────────────────────
 
-  _checkSnapshot(snapshot) {
+  private _checkSnapshot(snapshot: PetSnapshot): void {
     const sensors = this.petManager.getLastSensors();
 
     // 1. Check critical needs (below 15%)
@@ -263,7 +297,7 @@ export class NotificationManager {
       // Critical: dropped below 15%
       if (value < 15) {
         if (!this._wasCritical.has(key)) {
-          const msgFn = CRITICAL_MESSAGES[key];
+          const msgFn = CRITICAL_MESSAGES[key as NeedKey];
           if (msgFn) {
             const msg = msgFn(value, sensors);
             this.notify(`critical:${key}`, msg);
@@ -274,7 +308,7 @@ export class NotificationManager {
 
       // Recovery: was critical, now above 60%
       if (this._wasCritical.has(key) && value > 60) {
-        const msgFn = RECOVERY_MESSAGES[key];
+        const msgFn = RECOVERY_MESSAGES[key as NeedKey];
         if (msgFn) {
           const msg = msgFn(value);
           this.notify(`recovery:${key}`, msg);
@@ -307,7 +341,7 @@ export class NotificationManager {
     }
   }
 
-  _snapshotNeeds() {
+  private _snapshotNeeds(): void {
     const snapshot = this.petManager.getSnapshot();
     for (const [key, need] of Object.entries(snapshot.needs)) {
       this._previousNeeds[key] = need.value;
@@ -317,7 +351,7 @@ export class NotificationManager {
     }
   }
 
-  _checkDailySummary() {
+  private _checkDailySummary(): void {
     const now = new Date();
     const hour = now.getHours();
     const minute = now.getMinutes();
@@ -334,7 +368,7 @@ export class NotificationManager {
 
   // ── WhatsApp API ───────────────────────────────────────────
 
-  async _sendWhatsApp(message) {
+  private async _sendWhatsApp(message: string): Promise<boolean> {
     if (!TULIPA_TOKEN) {
       console.log('📱 [DRY RUN] No TULIPA_TOKEN set. Would send:', message.slice(0, 80));
       return false;
@@ -368,7 +402,7 @@ export class NotificationManager {
         return false;
       }
 
-      const result = await response.json();
+      const result = await response.json() as { error?: { message?: string } };
       if (result.error) {
         console.error('📱 WhatsApp MCP error:', result.error.message || result.error);
         return false;
@@ -377,28 +411,28 @@ export class NotificationManager {
       console.log('📱 WhatsApp sent:', message.slice(0, 60));
       return true;
     } catch (err) {
-      console.error('📱 WhatsApp send error:', err.message);
+      console.error('📱 WhatsApp send error:', (err as Error).message);
       return false;
     }
   }
 
   // ── Persistence ────────────────────────────────────────────
 
-  _load() {
+  private _load(): NotificationPersistedState {
     try {
       if (existsSync(NOTIFICATIONS_FILE)) {
         return JSON.parse(readFileSync(NOTIFICATIONS_FILE, 'utf-8'));
       }
     } catch (e) {
-      console.error('Failed to load notification state:', e.message);
+      console.error('Failed to load notification state:', (e as Error).message);
     }
     return {};
   }
 
-  _save() {
+  private _save(): void {
     try {
       if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-      const state = {
+      const state: NotificationPersistedState = {
         history: this.history.slice(0, HISTORY_MAX),
         lastNotification: this.lastNotification,
         dailyCount: this.dailyCount,
@@ -406,11 +440,11 @@ export class NotificationManager {
       };
       writeFileSync(NOTIFICATIONS_FILE, JSON.stringify(state, null, 2));
     } catch (e) {
-      console.error('Failed to save notification state:', e.message);
+      console.error('Failed to save notification state:', (e as Error).message);
     }
   }
 
-  _addToHistory(category, message, sent) {
+  private _addToHistory(category: string, message: string, sent: boolean): void {
     this.history.unshift({
       time: new Date().toISOString(),
       category,
@@ -424,11 +458,11 @@ export class NotificationManager {
 
   // ── Helpers ────────────────────────────────────────────────
 
-  _todayStr() {
+  private _todayStr(): string {
     return new Date().toISOString().slice(0, 10);
   }
 
-  _progressBar(value) {
+  private _progressBar(value: number): string {
     const filled = Math.round(value / 10);
     const empty = 10 - filled;
     return '█'.repeat(filled) + '░'.repeat(empty);

@@ -7,10 +7,59 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import type { PetState, SensorReadings } from './pet-state.js';
+import type { HistoryEntry } from './pet-manager.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, '..', '..', 'data');
 const ACHIEVEMENTS_FILE = join(DATA_DIR, 'achievements.json');
+
+// ── Interfaces ────────────────────────────────────────────────
+
+export interface AchievementContext {
+  petState: PetState;
+  sensors: SensorReadings;
+  history: HistoryEntry[];
+  tracker: AchievementTracker;
+  now: Date;
+}
+
+export interface AchievementDef {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  category: string;
+  target: number;
+  progressive?: boolean;
+  streakKey?: string;
+  condition: (ctx: AchievementContext) => boolean | number;
+}
+
+export interface AchievementState {
+  unlockedAt: string | null;
+  progress: number;
+}
+
+export interface FormattedAchievement {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  category: string;
+  status: 'unlocked' | 'locked';
+  progress: number;
+  target: number;
+  progressLabel: string | null;
+  unlockedAt: string | null;
+}
+
+interface TrackerJSON {
+  state: Record<string, AchievementState>;
+  streaks: Record<string, number>;
+  counters: Record<string, number>;
+  flags: Record<string, unknown>;
+}
 
 /**
  * Achievement definitions organized by category.
@@ -21,7 +70,7 @@ const ACHIEVEMENTS_FILE = join(DATA_DIR, 'achievements.json');
  *   - returns true/false for instant achievements
  *   - for progressive ones, returns a number (current progress value)
  */
-const ACHIEVEMENT_DEFS = [
+const ACHIEVEMENT_DEFS: AchievementDef[] = [
   // ── Sobrevivencia ──────────────────────────────────────────
   {
     id: 'primeiro_dia',
@@ -79,7 +128,7 @@ const ACHIEVEMENT_DEFS = [
     description: 'Todas as necessidades acima de 80% por 1 hora',
     icon: '🧘',
     category: 'Saúde Perfeita',
-    target: 60, // 60 ticks at 1-min interval = 1 hour
+    target: 60,
     progressive: true,
     condition: ({ petState, tracker }) => {
       const allAbove80 = Object.values(petState.needs).every(n => n.value >= 80);
@@ -94,7 +143,7 @@ const ACHIEVEMENT_DEFS = [
     description: 'Score geral acima de 90% por 6 horas',
     icon: '⚖️',
     category: 'Saúde Perfeita',
-    target: 360, // 360 minutes
+    target: 360,
     progressive: true,
     condition: ({ petState, tracker }) => {
       const above90 = petState.getOverallScore() >= 90;
@@ -109,7 +158,7 @@ const ACHIEVEMENT_DEFS = [
     description: 'Zero erros por 24 horas',
     icon: '✨',
     category: 'Saúde Perfeita',
-    target: 1440, // 1440 minutes
+    target: 1440,
     progressive: true,
     condition: ({ sensors, tracker }) => {
       const noErrors = (sensors.errorRate === undefined || sensors.errorRate === 0);
@@ -126,7 +175,7 @@ const ACHIEVEMENT_DEFS = [
     description: 'Uptime de 7 dias sem restart',
     icon: '🏃',
     category: 'Energia',
-    target: 168, // hours
+    target: 168,
     progressive: true,
     condition: ({ sensors }) => {
       return sensors.uptimeHours || 0;
@@ -138,10 +187,10 @@ const ACHIEVEMENT_DEFS = [
     description: 'Bateria nunca abaixo de 50% por 3 dias (Android)',
     icon: '🔋',
     category: 'Energia',
-    target: 4320, // 3 days in minutes
+    target: 4320,
     progressive: true,
     condition: ({ sensors, tracker }) => {
-      if (sensors.battery === undefined) return -1; // not applicable
+      if (sensors.battery === undefined) return -1;
       const above50 = sensors.battery >= 50;
       const streak = tracker._streaks.sempre_carregado || 0;
       return above50 ? streak + 1 : 0;
@@ -222,7 +271,7 @@ const ACHIEVEMENT_DEFS = [
     description: 'Limpeza em 100% por 12 horas',
     icon: '🧼',
     category: 'Limpeza',
-    target: 720, // 720 minutes
+    target: 720,
     progressive: true,
     condition: ({ petState, tracker }) => {
       const perfect = petState.needs.limpeza.value >= 100;
@@ -250,7 +299,7 @@ const ACHIEVEMENT_DEFS = [
     description: 'Zero tentativas de invasão por 7 dias',
     icon: '🏰',
     category: 'Segurança',
-    target: 10080, // 7 days in minutes
+    target: 10080,
     progressive: true,
     condition: ({ sensors, tracker }) => {
       const safe = (sensors.failedLogins === undefined || sensors.failedLogins === 0);
@@ -265,7 +314,7 @@ const ACHIEVEMENT_DEFS = [
     description: 'Tunnel up por 30 dias seguidos',
     icon: '🗼',
     category: 'Segurança',
-    target: 43200, // 30 days in minutes
+    target: 43200,
     progressive: true,
     condition: ({ sensors, tracker }) => {
       if (sensors.tunnelUp === undefined) return -1;
@@ -298,15 +347,14 @@ const ACHIEVEMENT_DEFS = [
     target: 1,
     condition: ({ sensors, tracker }) => {
       if (sensors.latitude === undefined || sensors.longitude === undefined) return false;
-      const prevLat = tracker._flags.last_lat;
-      const prevLon = tracker._flags.last_lon;
+      const prevLat = tracker._flags.last_lat as number | undefined;
+      const prevLon = tracker._flags.last_lon as number | undefined;
       tracker._flags.last_lat = sensors.latitude;
       tracker._flags.last_lon = sensors.longitude;
       if (prevLat === undefined) return false;
-      // Moved more than ~0.01 degrees (~1km)
       const dist = Math.sqrt(
         Math.pow(sensors.latitude - prevLat, 2) +
-        Math.pow(sensors.longitude - prevLon, 2)
+        Math.pow(sensors.longitude - (prevLon ?? 0), 2)
       );
       return dist > 0.01;
     },
@@ -317,7 +365,7 @@ const ACHIEVEMENT_DEFS = [
     description: 'GPU acima de 90% por 1 hora',
     icon: '🎮',
     category: 'Especiais',
-    target: 60, // minutes
+    target: 60,
     progressive: true,
     condition: ({ sensors, tracker }) => {
       if (sensors.gpuUsage === undefined) return -1;
@@ -355,14 +403,19 @@ const ACHIEVEMENT_DEFS = [
 ];
 
 export class AchievementTracker {
+  /** Map of achievement id -> { unlockedAt, progress } */
+  _state: Record<string, AchievementState>;
+  /** Streak counters for continuous-condition achievements (reset to 0 on break) */
+  _streaks: Record<string, number>;
+  /** Persistent counters (peers_seen, pet_interactions, gifts_received, etc.) */
+  _counters: Record<string, number>;
+  /** Misc flags for stateful conditions */
+  _flags: Record<string, unknown>;
+
   constructor() {
-    /** Map of achievement id -> { unlockedAt, progress } */
     this._state = {};
-    /** Streak counters for continuous-condition achievements (reset to 0 on break) */
     this._streaks = {};
-    /** Persistent counters (peers_seen, pet_interactions, gifts_received, etc.) */
     this._counters = {};
-    /** Misc flags for stateful conditions */
     this._flags = {};
 
     // Initialize state for every defined achievement
@@ -376,14 +429,11 @@ export class AchievementTracker {
 
   /**
    * Run all achievement checks.
-   * @param {PetState} petState
-   * @param {Object} sensors - latest sensor readings
-   * @param {Array} history - recent history entries
-   * @returns {Array} newly unlocked achievements (with full definition + unlockedAt)
+   * @returns newly unlocked achievements (with full definition + unlockedAt)
    */
-  check(petState, sensors, history) {
+  check(petState: PetState, sensors: SensorReadings, history: HistoryEntry[]): FormattedAchievement[] {
     const now = new Date();
-    const newlyUnlocked = [];
+    const newlyUnlocked: FormattedAchievement[] = [];
 
     for (const def of ACHIEVEMENT_DEFS) {
       const state = this._state[def.id];
@@ -391,8 +441,8 @@ export class AchievementTracker {
       // Skip already unlocked
       if (state.unlockedAt) continue;
 
-      const ctx = { petState, sensors, history, tracker: this, now };
-      let result;
+      const ctx: AchievementContext = { petState, sensors, history, tracker: this, now };
+      let result: boolean | number;
       try {
         result = def.condition(ctx);
       } catch {
@@ -433,26 +483,26 @@ export class AchievementTracker {
   /**
    * Increment a named counter. Call externally for events like interactions, gifts, etc.
    */
-  incrementCounter(name, amount = 1) {
+  incrementCounter(name: string, amount: number = 1): void {
     this._counters[name] = (this._counters[name] || 0) + amount;
   }
 
   /**
    * Register a peer pet seen on the network.
    */
-  registerPeer(peerId) {
-    if (!this._flags.peers_set) this._flags.peers_set = new Set();
-    // Sets don't serialize to JSON, so also keep the count
-    if (typeof this._flags.peers_set === 'object' && this._flags.peers_set.add) {
-      this._flags.peers_set.add(peerId);
-      this._counters.peers_seen = this._flags.peers_set.size;
+  registerPeer(peerId: string): void {
+    if (!this._flags.peers_set) this._flags.peers_set = new Set<string>();
+    const peersSet = this._flags.peers_set;
+    if (peersSet instanceof Set) {
+      peersSet.add(peerId);
+      this._counters.peers_seen = peersSet.size;
     }
   }
 
   /**
    * Update max friendship level seen with any peer.
    */
-  updateFriendship(level) {
+  updateFriendship(level: number): void {
     this._counters.max_friendship = Math.max(
       this._counters.max_friendship || 0,
       level
@@ -462,7 +512,7 @@ export class AchievementTracker {
   /**
    * Return all achievements with their status.
    */
-  getAll() {
+  getAll(): FormattedAchievement[] {
     return ACHIEVEMENT_DEFS.map(def => {
       const state = this._state[def.id];
       return this._formatAchievement(def, state);
@@ -472,11 +522,11 @@ export class AchievementTracker {
   /**
    * Return only unlocked achievements.
    */
-  getUnlocked() {
+  getUnlocked(): FormattedAchievement[] {
     return this.getAll().filter(a => a.status === 'unlocked');
   }
 
-  _formatAchievement(def, state) {
+  private _formatAchievement(def: AchievementDef, state: AchievementState): FormattedAchievement {
     const unlocked = !!state.unlockedAt;
     return {
       id: def.id,
@@ -496,9 +546,9 @@ export class AchievementTracker {
 
   // ── Persistence ────────────────────────────────────────────
 
-  toJSON() {
+  toJSON(): TrackerJSON {
     // Convert Set to array for serialization
-    const flagsCopy = { ...this._flags };
+    const flagsCopy: Record<string, unknown> = { ...this._flags };
     if (flagsCopy.peers_set instanceof Set) {
       flagsCopy.peers_set = [...flagsCopy.peers_set];
     }
@@ -510,7 +560,7 @@ export class AchievementTracker {
     };
   }
 
-  fromJSON(data) {
+  fromJSON(data: TrackerJSON | null): void {
     if (!data) return;
 
     // Restore state, merging with current definitions
@@ -528,28 +578,28 @@ export class AchievementTracker {
 
     // Restore Set for peers
     if (Array.isArray(this._flags.peers_set)) {
-      this._flags.peers_set = new Set(this._flags.peers_set);
-      this._counters.peers_seen = this._flags.peers_set.size;
+      this._flags.peers_set = new Set<string>(this._flags.peers_set as string[]);
+      this._counters.peers_seen = (this._flags.peers_set as Set<string>).size;
     }
   }
 
-  save() {
+  save(): void {
     try {
       if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
       writeFileSync(ACHIEVEMENTS_FILE, JSON.stringify(this.toJSON(), null, 2));
     } catch (e) {
-      console.error('Failed to save achievements:', e.message);
+      console.error('Failed to save achievements:', (e as Error).message);
     }
   }
 
-  load() {
+  load(): void {
     try {
       if (existsSync(ACHIEVEMENTS_FILE)) {
-        const data = JSON.parse(readFileSync(ACHIEVEMENTS_FILE, 'utf-8'));
+        const data: TrackerJSON = JSON.parse(readFileSync(ACHIEVEMENTS_FILE, 'utf-8'));
         this.fromJSON(data);
       }
     } catch (e) {
-      console.error('Failed to load achievements:', e.message);
+      console.error('Failed to load achievements:', (e as Error).message);
     }
   }
 }
