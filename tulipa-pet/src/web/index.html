@@ -260,7 +260,7 @@
     function interact(action) {
         if (ws?.readyState !== 1) return;
         ws.send(JSON.stringify({ action }));
-        const particles = { pet: ['&#x1F495;','&#x2764;&#xFE0F;','&#x1F49B;'], feed: ['&#x26A1;','&#x2728;'], clean: ['&#x2728;','&#x1F4A7;'], heal: ['&#x1F49A;','&#x2764;&#xFE0F;'], guard: ['&#x1F6E1;&#xFE0F;','&#x1F512;'], play: ['&#x1F3B5;','&#x2B50;','&#x1F389;'] };
+        const particles = { pet: ['\u{1F495}','\u{2764}\u{FE0F}','\u{1F49B}'], feed: ['\u{26A1}','\u{2728}'], clean: ['\u{2728}','\u{1F4A7}'], heal: ['\u{1F49A}','\u{2764}\u{FE0F}'], guard: ['\u{1F6E1}\u{FE0F}','\u{1F512}'], play: ['\u{1F3B5}','\u{2B50}','\u{1F389}'] };
         (particles[action] || []).forEach((p, i) => setTimeout(() => spawnParticle(p), i * 200));
         if (action === 'pet') playPurr();
         else playChime();
