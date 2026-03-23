@@ -15,6 +15,9 @@ const receiptLib = require('./lib/ledger/receipt');
 const createLocalTools = require('./lib/local-tools');
 const capabilitiesLib = require('./lib/capabilities');
 const { requireScope, resolveScopes } = require('./lib/middleware/scope-guard');
+const { InfraScanner } = require('./lib/infra/scanner');
+const InfraAdopter = require('./lib/infra/adopt');
+const SSHTaskRunner = require('./lib/infra/ssh-task');
 
 const app = express();
 
@@ -170,6 +173,25 @@ const mesh = new MeshManager({
   ledger,
   discoveryInterval: parseInt(process.env.MESH_DISCOVERY_INTERVAL || '120000', 10),
   heartbeatInterval: parseInt(process.env.MESH_HEARTBEAT_INTERVAL || '60000', 10),
+});
+
+// ─── Infra Layer ──────────────────────────────────────────────────────
+const infraScanner = new InfraScanner({
+  fetch: proxyFetch,
+  subnets: (process.env.SCAN_SUBNETS || '192.168.1,192.168.15,10.0.0').split(','),
+  timeout: parseInt(process.env.SCAN_TIMEOUT || '3000', 10),
+});
+const infraAdopter = new InfraAdopter({
+  registry: mesh.registry,
+  trust: mesh.trust,
+  fetch: proxyFetch,
+});
+
+infraScanner.on('discovered', (svc) => {
+  console.log(`[infra] Descoberto: ${svc.type} em ${svc.endpoint} (v${svc.version})`);
+});
+infraAdopter.on('adopted', ({ nodeId, type, endpoint }) => {
+  console.log(`[infra] Adotado: ${type} como ${nodeId} (${endpoint})`);
 });
 
 // ─── Scope Resolution (popula req.grantedScopes) ─────────────────────
@@ -823,6 +845,106 @@ app.post('/api/local-mcp', (req, res) => {
   }
 
   res.json({ jsonrpc: '2.0', id, result });
+});
+
+// ─── Infra Routes (Sprint 4) ──────────────────────────────────────────
+
+// Scan de endpoints específicos
+app.post('/api/infra/scan', requireAuth, async (req, res) => {
+  const { endpoints, subnets } = req.body;
+  try {
+    let results;
+    if (endpoints && endpoints.length > 0) {
+      results = await infraScanner.scanEndpoints(endpoints);
+    } else {
+      results = await infraScanner.scanSubnets({ subnets });
+    }
+    res.json({ found: results.length, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Scan de um host específico
+app.post('/api/infra/scan/:ip', requireAuth, async (req, res) => {
+  try {
+    const results = await infraScanner.scanHost(req.params.ip);
+    res.json({ ip: req.params.ip, found: results.length, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Último scan realizado
+app.get('/api/infra/scan', (_req, res) => {
+  res.json(infraScanner.getLastScan() || { message: 'Nenhum scan realizado' });
+});
+
+// Adotar serviço descoberto
+app.post('/api/infra/adopt', requireAuth, (req, res) => {
+  const { discovered, credentials } = req.body;
+  if (!discovered || !discovered.type || !discovered.endpoint) {
+    return res.status(400).json({ error: 'Campo "discovered" com type e endpoint é obrigatório' });
+  }
+
+  try {
+    const result = infraAdopter.adopt(discovered, credentials);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Listar serviços adotados
+app.get('/api/infra/adopted', requireAuth, (_req, res) => {
+  res.json({ services: infraAdopter.list() });
+});
+
+// Testar conectividade de serviço adotado
+app.post('/api/infra/test/:nodeId', requireAuth, async (req, res) => {
+  try {
+    const result = await infraAdopter.test(req.params.nodeId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Remover serviço adotado
+app.delete('/api/infra/adopted/:nodeId', requireAuth, (req, res) => {
+  infraAdopter.remove(req.params.nodeId);
+  res.json({ ok: true, removed: req.params.nodeId });
+});
+
+// Executar comando SSH via task
+app.post('/api/infra/ssh/:nodeId', requireAuth, async (req, res) => {
+  const { command, commands } = req.body;
+  const peer = mesh.registry.get(req.params.nodeId);
+  if (!peer?.metadata?.isInfra) {
+    return res.status(404).json({ error: 'Peer não é um serviço de infra adotado' });
+  }
+
+  const ssh = new SSHTaskRunner({
+    host: peer.metadata.ip,
+    port: peer.metadata.port === 22 ? 22 : undefined,
+    user: req.body.user || 'root',
+    keyPath: req.body.keyPath,
+    timeout: req.body.timeout,
+  });
+
+  try {
+    if (commands && Array.isArray(commands)) {
+      const results = await ssh.executeMany(commands, { stopOnError: req.body.stopOnError });
+      res.json({ results });
+    } else if (command) {
+      const result = await ssh.execute(command);
+      res.json(result);
+    } else {
+      res.status(400).json({ error: 'Campo "command" ou "commands" é obrigatório' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── Economy Dashboard (Sprint 8) ─────────────────────────────────────
