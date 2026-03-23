@@ -704,6 +704,49 @@ app.get('/api/network/crawl', (_req, res) => {
   res.json(mesh.crawler.cacheInfo());
 });
 
+// ─── Federation Routes (Sprint 7) ─────────────────────────────────────
+
+// Busca federada por skill na rede
+app.post('/api/network/query', async (req, res) => {
+  const { skill, queryId, hopsRemaining, originNode } = req.body;
+  if (!skill) return res.status(400).json({ error: 'Campo "skill" é obrigatório' });
+
+  try {
+    const result = await mesh.federation.query(skill, { queryId, hopsRemaining, originNode });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Relay de task via este hub
+app.post('/api/network/relay', requireAuth, async (req, res) => {
+  const { targetNodeId, prompt, skill, originNode } = req.body;
+  if (!targetNodeId || !prompt) {
+    return res.status(400).json({ error: 'Campos "targetNodeId" e "prompt" são obrigatórios' });
+  }
+
+  try {
+    const result = await mesh.sendPrompt(targetNodeId, prompt, { skill });
+    res.json({
+      ok: true,
+      relayedVia: protocol.NODE_ID,
+      originNode,
+      targetNodeId,
+      response: result.response,
+      model: result.model,
+      method: result.method,
+    });
+  } catch (err) {
+    res.status(502).json({ error: `Relay falhou: ${err.message}` });
+  }
+});
+
+// Estatísticas da federação (rate limits, queries recentes)
+app.get('/api/network/federation', (_req, res) => {
+  res.json(mesh.federation.stats());
+});
+
 // ─── Capabilities Routes (Sprint 3) ───────────────────────────────────
 
 // Capabilities deste nó (configuráveis via env ou hardcoded para v0.4.0)
