@@ -19,7 +19,7 @@ interface PetManager extends EventEmitter {
   getLastSensors(): unknown;
   interact(action: string): unknown;
   getAllPets(): unknown;
-  getAchievements(): Array<{ status: string; [key: string]: unknown }>;
+  getAchievements(): unknown[];
   pet: { name: string };
 }
 
@@ -94,7 +94,7 @@ export function createPetServer(
 
   // API: List achievements
   app.get('/api/achievements', (_req: Request, res: Response) => {
-    const all = petManager.getAchievements();
+    const all = petManager.getAchievements() as Array<{ status: string }>;
     const unlocked = all.filter(a => a.status === 'unlocked');
     res.json({
       total: all.length,

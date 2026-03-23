@@ -2,7 +2,7 @@
  * Shared types for Tulipa Pet sensor system
  */
 
-export type AgentType = 'android' | 'server' | 'desktop';
+export type AgentType = 'android' | 'server' | 'desktop' | 'unknown';
 
 export interface SensorLocation {
   lat: number;

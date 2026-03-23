@@ -35,7 +35,7 @@ async function mcpCall(method: string, args: Record<string, unknown> = {}): Prom
       }),
       signal: AbortSignal.timeout(10000),
     });
-    const data: McpResponse = await res.json();
+    const data = await res.json() as McpResponse;
     return data.result ?? null;
   } catch {
     return null;
