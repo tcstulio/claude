@@ -9,7 +9,9 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { PetState } from './pet-state.js';
+import type { PetSnapshot, PetJSON, SensorReadings, AgentType } from './pet-state.js';
 import { AchievementTracker } from './achievements.js';
+import type { FormattedAchievement } from './achievements.js';
 import { detectEnvironment, collectAllSensors } from '../sensors/collector-factory.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -21,14 +23,43 @@ const COLLECT_INTERVAL = 60_000;  // 1 minute
 const SAVE_INTERVAL = 300_000;    // 5 minutes
 const HISTORY_MAX = 1440;         // 24 hours of minute-by-minute data
 
+export interface HistoryEntry {
+  time: number;
+  score: number;
+  mood: string;
+  needs: Record<string, number>;
+}
+
+export interface InteractionResult {
+  ok: boolean;
+  message: string;
+  xpGain?: number;
+  snapshot?: PetSnapshot;
+}
+
+export type InteractionAction = 'pet' | 'feed' | 'clean' | 'heal' | 'guard' | 'play';
+
+export interface PetManagerEvents {
+  update: (snapshot: PetSnapshot) => void;
+  achievement: (achievement: FormattedAchievement) => void;
+}
+
 export class PetManager extends EventEmitter {
+  envType: AgentType;
+  pet: PetState;
+  lastSensors: SensorReadings;
+  history: HistoryEntry[];
+  networkPets: Map<string, PetSnapshot>;
+  achievements: AchievementTracker;
+  private _timers: ReturnType<typeof setInterval>[];
+
   constructor() {
     super();
-    this.envType = detectEnvironment();
+    this.envType = detectEnvironment() as AgentType;
     this.pet = this._loadOrCreate();
     this.lastSensors = {};
     this.history = this._loadHistory();
-    this.networkPets = new Map(); // pets from other agents
+    this.networkPets = new Map();
     this._timers = [];
 
     // Achievement system
@@ -40,14 +71,14 @@ export class PetManager extends EventEmitter {
     console.log(`   🏆 ${this.achievements.getUnlocked().length} achievements unlocked`);
   }
 
-  _loadOrCreate() {
+  private _loadOrCreate(): PetState {
     try {
       if (existsSync(PET_FILE)) {
-        const data = JSON.parse(readFileSync(PET_FILE, 'utf-8'));
+        const data: PetJSON = JSON.parse(readFileSync(PET_FILE, 'utf-8'));
         return PetState.fromJSON(data);
       }
     } catch (e) {
-      console.error('Failed to load pet, creating new:', e.message);
+      console.error('Failed to load pet, creating new:', (e as Error).message);
     }
 
     // Create new pet
@@ -55,7 +86,7 @@ export class PetManager extends EventEmitter {
     return new PetState(agentId, this.envType);
   }
 
-  _loadHistory() {
+  private _loadHistory(): HistoryEntry[] {
     try {
       if (existsSync(HISTORY_FILE)) {
         return JSON.parse(readFileSync(HISTORY_FILE, 'utf-8'));
@@ -66,20 +97,20 @@ export class PetManager extends EventEmitter {
     return [];
   }
 
-  _save() {
+  private _save(): void {
     try {
       if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
       writeFileSync(PET_FILE, JSON.stringify(this.pet.toJSON(), null, 2));
       writeFileSync(HISTORY_FILE, JSON.stringify(this.history.slice(-HISTORY_MAX)));
       this.achievements.save();
     } catch (e) {
-      console.error('Failed to save pet:', e.message);
+      console.error('Failed to save pet:', (e as Error).message);
     }
   }
 
-  async tick() {
+  async tick(): Promise<PetSnapshot> {
     try {
-      const sensors = await collectAllSensors(this.envType);
+      const sensors: SensorReadings = await collectAllSensors(this.envType);
       this.lastSensors = sensors;
 
       const snapshot = this.pet.updateFromSensors(sensors);
@@ -118,12 +149,12 @@ export class PetManager extends EventEmitter {
       this.emit('update', snapshot);
       return snapshot;
     } catch (e) {
-      console.error('Tick error:', e.message);
+      console.error('Tick error:', (e as Error).message);
       return this.pet.getSnapshot();
     }
   }
 
-  interact(action) {
+  interact(action: InteractionAction): InteractionResult {
     let message = '';
     let xpGain = 0;
 
@@ -186,7 +217,7 @@ export class PetManager extends EventEmitter {
     return { ok: true, message, xpGain, snapshot };
   }
 
-  start() {
+  start(): void {
     // Initial tick
     this.tick();
 
@@ -199,16 +230,16 @@ export class PetManager extends EventEmitter {
     console.log(`⏰ Collecting sensors every ${COLLECT_INTERVAL / 1000}s`);
   }
 
-  stop() {
+  stop(): void {
     this._timers.forEach(t => clearInterval(t));
     this._save();
     console.log('🌷 Pet saved and stopped');
   }
 
-  getSnapshot() { return this.pet.getSnapshot(); }
-  getLastSensors() { return this.lastSensors; }
-  getHistory() { return this.history.slice(-100); }
-  getAllPets() {
+  getSnapshot(): PetSnapshot { return this.pet.getSnapshot(); }
+  getLastSensors(): SensorReadings { return this.lastSensors; }
+  getHistory(): HistoryEntry[] { return this.history.slice(-100); }
+  getAllPets(): PetSnapshot[] {
     return [
       this.pet.getSnapshot(),
       ...Array.from(this.networkPets.values()),
@@ -216,12 +247,12 @@ export class PetManager extends EventEmitter {
   }
 
   // Register a peer's pet state
-  registerPeerPet(snapshot) {
+  registerPeerPet(snapshot: PetSnapshot): void {
     this.networkPets.set(snapshot.agentId, snapshot);
     this.achievements.registerPeer(snapshot.agentId);
   }
 
-  getAchievements() {
+  getAchievements(): FormattedAchievement[] {
     return this.achievements.getAll();
   }
 }
