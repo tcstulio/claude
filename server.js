@@ -128,9 +128,15 @@ async function callMcpTool(tool, args = {}, req = null) {
 let storage;
 try {
   storage = new Storage();
-  console.log('[storage] Usando better-sqlite3 (nativo)');
-} catch (_) {
-  storage = null; // será inicializado async no startup
+  if (storage._adapter) {
+    console.log(`[storage] Usando ${storage._engine} — pronto`);
+  } else {
+    console.log('[storage] Construtor ok mas adapter null — fallback async');
+    storage = null;
+  }
+} catch (err) {
+  console.log(`[storage] Init sync falhou (${err.message}) — fallback async`);
+  storage = null;
 }
 
 // ─── Inicializa Identity (Ed25519) ────────────────────────────────────
@@ -1097,11 +1103,13 @@ async function startServer() {
   queue.start(5000);
 
   // Log audit de startup
-  storage.log('system.startup', protocol.NODE_ID, null, {
-    version: '5.0',
-    transports: [...router._transports.keys()],
-    fingerprint: identity.fingerprint,
-  });
+  if (storage && storage._adapter) {
+    storage.log('system.startup', protocol.NODE_ID, null, {
+      version: '5.0',
+      transports: [...router._transports.keys()],
+      fingerprint: identity.fingerprint,
+    });
+  }
   });
 }
 
