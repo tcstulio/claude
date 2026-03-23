@@ -281,12 +281,13 @@ Não é um nó fixo dedicado. A **rede decide** qual nó roda os testes, baseado
 
 ### Infraestrutura Disponível
 
-**Proxmox VE** (já configurado no Tulipa):
-- **Host:** 192.168.191.207:8006 (nó `n97`)
-- **Auth:** API token `root@pam!tulipa` (já salvo em `~/.tulipa/proxmox.json`)
+**Proxmox VE** (peer da rede, não hardcoded):
+- **Nó:** `n97` — se registra na rede como peer com `capability: ["compute", "proxmox"]`
+- **Endereço:** vem do peering (endpoint externo), **nunca** hardcoded no código
+- **Auth:** configurado via `POST /api/proxmox/configure` ou auto-discovery da rede
 - **Capacidades:** LXC containers, VMs, storage management, backup
-- **Status atual:** Offline (precisa estar na mesma rede do Hub)
-- **Código:** `gateway/src/handlers/proxmox.ts` — client completo com create/start/stop/delete container
+- **Código:** `gateway/src/handlers/proxmox.ts` — client completo, retorna "not configured" se host vazio
+- **Princípio:** Proxmox é só mais um nó — a rede decide se/quando usá-lo
 
 ### Como a Rede Decide (Scheduler Autônomo)
 
