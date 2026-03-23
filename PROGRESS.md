@@ -90,23 +90,55 @@ test/                          — 78 testes (todos passando)
 
 ---
 
-## Próximo passo: send_prompt P2P
+## Sessão 6 — sendPrompt P2P (concluído)
 
-### Objetivo
-Usar `send_prompt` do gateway MCP para enviar prompts reais ao Servidor 2070, que executa via Claude CLI e retorna o resultado. Integrar com o mesh para delegação distribuída de tarefas.
+- `mesh.sendPrompt(nodeId, prompt, { systemPrompt, model, timeoutMs })` implementado
+- 3 estratégias com fallback: HTTP direto → gateway relay → send_prompt MCP
+- `POST /api/mesh/prompt/:nodeId` — rota REST
+- Teste E2E: "Quanto é 2+2?" → Servidor 2070 respondeu "4"
+- 6 testes unitários (84 total, todos passando)
 
-### Por que este passo
-- É o **core use case** da rede: agentes delegando trabalho entre si
-- O `send_prompt` já existe no gateway como MCP tool
-- O Servidor 2070 já respondeu PONG — a conexão P2P funciona
-- Sem isso, a rede é apenas infraestrutura sem propósito prático
+## Sessão 7 — Diagnóstico Servidor 2070 + Paridade
 
-### O que implementar
-1. `mesh.sendPrompt(nodeId, prompt, options)` — envia prompt e aguarda resposta
-2. `POST /api/mesh/prompt/:nodeId` — rota REST para enviar prompt a um peer
-3. Integrar com queue para retry se peer estiver temporariamente offline
-4. Timeout configurável (prompts podem demorar)
-5. Teste fim a fim: enviar prompt para Servidor 2070 e receber resposta
+### Descobertas sobre o Servidor 2070
+- **Plataforma**: Windows (win32 x64), Node v24.12.0
+- **Gateway**: 0.1.0 (Tulipa #1 é 0.4.0) — 3 versões atrás
+- **Hub mode**: false (nó comum)
+- **Supervisor**: NÃO rodando
+- **Logs**: NÃO persistentes
+- **Auto-deploy**: NÃO configurado
+- **Token peer scopes**: [read, write, peer] — sem admin
+- **MCP**: Funcionando (12 tools), mas run_command bloqueado sem admin
+- **Tokens existentes**: bootstrap, owner, owner-session
+
+### Hub Mode — Como funciona
+- `hubMode` é booleano no `~/.tulipa/network/identity.json`
+- Ativar: `tulipa network hub enable`
+- Hub mantém Registry global de peers, expõe `/api/network/registry`
+- Qualquer nó pode ser hub — não é exclusivo
+- Hub pode intermediar msgs entre peers que não se conhecem
+
+### O que falta para paridade
+1. Token admin no 2070 (obter via terminal local)
+2. `git pull origin main` (atualizar 0.1.0 → 0.4.0)
+3. Compilar TypeScript (todos os módulos)
+4. Criar `services.yaml` (template pronto em config/services-windows.yaml)
+5. Ativar hub mode (`tulipa network hub enable`)
+6. Iniciar via supervisor (`tulipa up`)
+
+### Arquivos criados
+- `config/services-windows.yaml` — template de serviços para Windows
+- `scripts/setup-2070.sh` — script de setup local
+- `scripts/deploy-to-2070.sh` — deploy remoto via MCP (precisa admin token)
+
+### Blocker
+**Token admin no Servidor 2070.** Nosso peer token tem scope [read, write, peer].
+Para obter admin, no terminal do 2070:
+```
+cat ~/.tulipa/api-tokens.yaml     # copiar token owner
+# ou
+cd ~/tulipa && node bin/tulipa.js token create --name hub-admin --scopes admin
+```
 
 ### Depois disso
 - TaskReceipt + Ledger (Sprint 2) — contabilidade de tarefas
