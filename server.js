@@ -6,6 +6,7 @@ const WhatsAppTransport = require('./lib/transport/whatsapp');
 const TelegramTransport = require('./lib/transport/telegram');
 const MessageQueue = require('./lib/queue');
 const Router = require('./lib/router');
+const MeshManager = require('./lib/mesh');
 const protocol = require('./lib/protocol');
 
 const app = express();
@@ -80,6 +81,21 @@ const telegram = new TelegramTransport({
 const router = new Router({ queue });
 router.register(whatsapp);
 if (telegram.configured) router.register(telegram);
+
+// ─── Mesh Layer ───────────────────────────────────────────────────────
+const mesh = new MeshManager({
+  router,
+  callMcpTool,
+  discoveryInterval: parseInt(process.env.MESH_DISCOVERY_INTERVAL || '120000', 10),
+  heartbeatInterval: parseInt(process.env.MESH_HEARTBEAT_INTERVAL || '60000', 10),
+});
+
+mesh.on('peer-joined', (peer) => {
+  console.log(`[mesh] Novo peer: ${peer.name} — canais: ${peer.channels.join(', ') || 'nenhum'}`);
+});
+mesh.on('peer-left', (peer) => {
+  console.log(`[mesh] Peer saiu: ${peer.name}`);
+});
 
 // Log de eventos do router
 router.on('sent', ({ channel, destination }) => {
@@ -350,6 +366,65 @@ app.get('/api/telegram/updates', async (req, res) => {
   }
 });
 
+// ─── Mesh endpoints ───────────────────────────────────────────────────
+
+// Estado do mesh
+app.get('/api/mesh', (_req, res) => {
+  res.json(mesh.toJSON());
+});
+
+// Lista peers do registry local
+app.get('/api/mesh/peers', (_req, res) => {
+  const { status, capability } = _req.query;
+  const filter = {};
+  if (status) filter.status = status;
+  if (capability) filter.capability = capability;
+  res.json({ peers: mesh.registry.list(filter) });
+});
+
+// Força discovery agora
+app.post('/api/mesh/discover', async (_req, res) => {
+  try {
+    const peers = await mesh.discover();
+    res.json({ ok: true, found: peers.length, registry: mesh.registry.toJSON() });
+  } catch (err) {
+    res.status(502).json({ error: 'Discovery falhou', detail: err.message });
+  }
+});
+
+// Ping um peer específico
+app.post('/api/mesh/ping/:nodeId', async (req, res) => {
+  try {
+    const start = Date.now();
+    const result = await mesh.pingPeer(req.params.nodeId);
+    res.json({ ok: true, latency: Date.now() - start, result });
+  } catch (err) {
+    res.status(502).json({ error: 'Ping falhou', detail: err.message });
+  }
+});
+
+// Enviar mensagem para um peer
+app.post('/api/mesh/send/:nodeId', async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message) return res.status(400).json({ error: 'Campo "message" é obrigatório' });
+    const result = await mesh.sendToPeer(req.params.nodeId, message);
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(502).json({ error: 'Envio falhou', detail: err.message });
+  }
+});
+
+// Heartbeat manual (pinga todos os peers)
+app.post('/api/mesh/heartbeat', async (_req, res) => {
+  try {
+    const results = await mesh.heartbeatAll();
+    res.json({ ok: true, results });
+  } catch (err) {
+    res.status(502).json({ error: 'Heartbeat falhou', detail: err.message });
+  }
+});
+
 // Proxy genérico MCP
 app.post('/api/mcp/:tool', async (req, res) => {
   try {
@@ -376,7 +451,7 @@ function startMonitor() {
 }
 
 app.listen(PORT, () => {
-  console.log(`\nTulipa API v2.0 — Transport Layer`);
+  console.log(`\nTulipa API v3.0 — Transport + Mesh`);
   console.log(`Gateway: ${GATEWAY_URL}`);
   console.log(`Node: ${protocol.NODE_ID} (${protocol.NODE_NAME})`);
   console.log(`\nTransports: ${[...router._transports.keys()].join(', ')}`);
@@ -404,6 +479,20 @@ app.listen(PORT, () => {
   } else {
     console.log('\n  Telegram: não configurado (set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)');
   }
+
+  // Mesh endpoints
+  console.log('\n  Mesh:');
+  console.log('  GET  /api/mesh               — estado do mesh');
+  console.log('  GET  /api/mesh/peers          — peers conhecidos');
+  console.log('  POST /api/mesh/discover       — forçar discovery');
+  console.log('  POST /api/mesh/ping/:nodeId   — ping peer');
+  console.log('  POST /api/mesh/send/:nodeId   — enviar para peer');
+  console.log('  POST /api/mesh/heartbeat      — pingar todos');
+
+  // Inicia mesh (discovery + heartbeat)
+  mesh.start().catch(err => {
+    console.error(`[mesh] Falha ao iniciar: ${err.message}`);
+  });
 
   startMonitor();
   queue.start(5000);
