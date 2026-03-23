@@ -19,6 +19,7 @@ const { InfraScanner } = require('./lib/infra/scanner');
 const InfraAdopter = require('./lib/infra/adopt');
 const SSHTaskRunner = require('./lib/infra/ssh-task');
 const { CanaryRunner } = require('./lib/infra/canary');
+const OrgRegistry = require('./lib/org/org-registry');
 
 const app = express();
 
@@ -206,6 +207,12 @@ const canary = new CanaryRunner({
       try { await callMcpTool('send_whatsapp', { to: process.env.ALERT_PHONE, message }); } catch {}
     }
   },
+});
+
+// ─── Org Layer ────────────────────────────────────────────────────────
+const orgRegistry = new OrgRegistry({
+  dataDir: process.env.LEDGER_DIR || './data',
+  trust: mesh.trust,
 });
 
 // ─── Scope Resolution (popula req.grantedScopes) ─────────────────────
@@ -958,6 +965,116 @@ app.post('/api/infra/ssh/:nodeId', requireAuth, async (req, res) => {
     }
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Org Routes (Sprint 9) ────────────────────────────────────────────
+
+// Criar org
+app.post('/api/org', requireAuth, (req, res) => {
+  const { name, policies } = req.body;
+  if (!name) return res.status(400).json({ error: 'Campo "name" é obrigatório' });
+
+  const createdBy = req.peer?.nodeId || protocol.NODE_ID;
+  const org = orgRegistry.create(name, createdBy, policies);
+  orgRegistry.save();
+  res.json(org.toJSON());
+});
+
+// Listar orgs (opcionalmente filtrar por member)
+app.get('/api/org', requireAuth, (req, res) => {
+  const orgs = orgRegistry.list({ member: req.query.member });
+  res.json({ orgs: orgs.map(o => o.toJSON()) });
+});
+
+// Detalhes de uma org
+app.get('/api/org/:orgId', requireAuth, (req, res) => {
+  const org = orgRegistry.get(req.params.orgId);
+  if (!org) return res.status(404).json({ error: 'Org não encontrada' });
+  res.json({
+    ...org.toJSON(),
+    reputation: orgRegistry.getOrgReputation(org.id),
+  });
+});
+
+// Convidar membro
+app.post('/api/org/:orgId/invite', requireAuth, (req, res) => {
+  const { nodeId, role } = req.body;
+  if (!nodeId) return res.status(400).json({ error: 'Campo "nodeId" é obrigatório' });
+
+  const org = orgRegistry.get(req.params.orgId);
+  if (!org) return res.status(404).json({ error: 'Org não encontrada' });
+
+  try {
+    const invitedBy = req.peer?.nodeId || protocol.NODE_ID;
+    const result = org.invite(nodeId, invitedBy, role);
+    orgRegistry.save();
+    res.json(result);
+  } catch (err) {
+    res.status(403).json({ error: err.message });
+  }
+});
+
+// Aceitar convite
+app.post('/api/org/:orgId/accept', requireAuth, (req, res) => {
+  const org = orgRegistry.get(req.params.orgId);
+  if (!org) return res.status(404).json({ error: 'Org não encontrada' });
+
+  try {
+    const nodeId = req.body.nodeId || req.peer?.nodeId || protocol.NODE_ID;
+    const result = org.acceptInvite(nodeId);
+    orgRegistry.save();
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Atualizar políticas
+app.put('/api/org/:orgId/policies', requireAuth, (req, res) => {
+  const org = orgRegistry.get(req.params.orgId);
+  if (!org) return res.status(404).json({ error: 'Org não encontrada' });
+
+  try {
+    const changedBy = req.peer?.nodeId || protocol.NODE_ID;
+    const policies = org.updatePolicies(req.body, changedBy);
+    orgRegistry.save();
+    res.json({ policies });
+  } catch (err) {
+    res.status(403).json({ error: err.message });
+  }
+});
+
+// Remover membro
+app.delete('/api/org/:orgId/member/:nodeId', requireAuth, (req, res) => {
+  const org = orgRegistry.get(req.params.orgId);
+  if (!org) return res.status(404).json({ error: 'Org não encontrada' });
+
+  try {
+    const removedBy = req.peer?.nodeId || protocol.NODE_ID;
+    org.removeMember(req.params.nodeId, removedBy);
+    orgRegistry.save();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(403).json({ error: err.message });
+  }
+});
+
+// Reputação cross-hub de um agente
+app.get('/api/org/reputation/:nodeId', (_req, res) => {
+  const boost = orgRegistry.getTrustBoost(_req.params.nodeId);
+  const orgs = orgRegistry.getPublicOrgInfo(_req.params.nodeId);
+  res.json({ nodeId: _req.params.nodeId, trustBoost: boost, orgs });
+});
+
+// Deletar org
+app.delete('/api/org/:orgId', requireAuth, (req, res) => {
+  try {
+    const removedBy = req.peer?.nodeId || protocol.NODE_ID;
+    orgRegistry.remove(req.params.orgId, removedBy);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(403).json({ error: err.message });
   }
 });
 
