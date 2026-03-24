@@ -115,6 +115,29 @@ export interface SensorReadings {
   latitude?: number;
   longitude?: number;
   gpuUsage?: number;
+
+  // Economy counters (from Tulipa API metrics)
+  mcpCalls?: number;
+  mcpErrors?: number;
+  messagesRouted?: number;
+  messagesFailed?: number;
+  httpRequests?: number;
+  tasksFailed?: number;
+
+  // Peaks / watermarks
+  peakCpuPercent?: number;
+  peakMemoryRss?: number;
+
+  // Process-level
+  processRss?: number;
+  processHeapUsed?: number;
+
+  // Terminal (tmux)
+  terminalPanes?: number;
+  terminalActivePanes?: number;
+  terminalCommands?: string[];
+  terminalMoodBoost?: number;
+  terminalEnergyDrain?: number;
 }
 
 // ── Constants ─────────────────────────────────────────────────
@@ -290,6 +313,64 @@ export class PetState {
       if (sensors.uptimeHours > 168) {
         this.needs.saude.value = Math.min(this.needs.saude.value, 60);
       }
+    }
+
+    // ── Economy counters → pet needs ────────────────────────────
+
+    // MCP errors degrade health (something is wrong with the system)
+    if (sensors.mcpErrors !== undefined && sensors.mcpCalls !== undefined && sensors.mcpCalls > 0) {
+      const errorRate = sensors.mcpErrors / sensors.mcpCalls;
+      if (errorRate > 0.1) {
+        // More than 10% error rate = health penalty
+        this.needs.saude.value = Math.max(0, this.needs.saude.value - errorRate * 30);
+      }
+    }
+
+    // Messages routed boost social (pet is communicating)
+    if (sensors.messagesRouted !== undefined && sensors.messagesRouted > 0) {
+      const socialBoost = Math.min(20, sensors.messagesRouted * 0.5);
+      this.needs.social.value = Math.min(100, this.needs.social.value + socialBoost);
+    }
+
+    // High HTTP requests = busy pet (slight energy drain if extreme)
+    if (sensors.httpRequests !== undefined && sensors.httpRequests > 5000) {
+      this.needs.energia.value = Math.max(20, this.needs.energia.value - 5);
+    }
+
+    // Peak CPU > 80% = stress penalty on health
+    if (sensors.peakCpuPercent !== undefined && sensors.peakCpuPercent > 80) {
+      const stressPenalty = (sensors.peakCpuPercent - 80) * 0.5;
+      this.needs.saude.value = Math.max(0, this.needs.saude.value - stressPenalty);
+    }
+
+    // High process memory = needs cleanup (limpeza)
+    if (sensors.processHeapUsed !== undefined) {
+      const heapMB = sensors.processHeapUsed / (1024 * 1024);
+      if (heapMB > 200) {
+        const penalty = Math.min(20, (heapMB - 200) * 0.1);
+        this.needs.limpeza.value = Math.max(0, this.needs.limpeza.value - penalty);
+      }
+    }
+
+    // ── Terminal → pet mood/energy ──────────────────────────────
+
+    // Terminal mood boost (positive commands = happy, no panes = lonely)
+    if (sensors.terminalMoodBoost !== undefined) {
+      this.needs.humor.value = Math.max(0, Math.min(100,
+        this.needs.humor.value + sensors.terminalMoodBoost
+      ));
+    }
+
+    // Terminal energy drain (many panes / heavy commands)
+    if (sensors.terminalEnergyDrain !== undefined && sensors.terminalEnergyDrain > 0) {
+      this.needs.energia.value = Math.max(0,
+        this.needs.energia.value - sensors.terminalEnergyDrain * 0.5
+      );
+    }
+
+    // Active panes = someone is around (social boost)
+    if (sensors.terminalActivePanes !== undefined && sensors.terminalActivePanes > 0) {
+      this.needs.social.value = Math.min(100, this.needs.social.value + 5);
     }
 
     // Clamp all values

@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Entrar - Arquibancada 3D</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            min-height: 100vh;
+            background: #1a1a2e;
+            font-family: Arial, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+        }
+        .container {
+            background: rgba(0, 0, 0, 0.7);
+            padding: 40px;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 420px;
+            margin: 20px;
+        }
+        h1 {
+            font-size: 24px;
+            color: #4fc3f7;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+        .subtitle {
+            color: #aaa;
+            font-size: 14px;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            font-size: 13px;
+            color: #ccc;
+            margin-bottom: 6px;
+        }
+        input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid #333;
+            border-radius: 6px;
+            background: #16213e;
+            color: #fff;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input:focus {
+            border-color: #4fc3f7;
+        }
+        input::placeholder {
+            color: #555;
+        }
+        .btn {
+            width: 100%;
+            padding: 14px;
+            border: none;
+            border-radius: 6px;
+            background: #4fc3f7;
+            color: #1a1a2e;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-top: 10px;
+        }
+        .btn:hover {
+            background: #81d4fa;
+        }
+        .btn:active {
+            background: #29b6f6;
+        }
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 24px 0;
+            color: #555;
+            font-size: 12px;
+        }
+        .divider::before,
+        .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: #333;
+        }
+        .divider span {
+            padding: 0 12px;
+        }
+        .link {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 13px;
+            color: #aaa;
+        }
+        .link a {
+            color: #4fc3f7;
+            text-decoration: none;
+        }
+        .link a:hover {
+            text-decoration: underline;
+        }
+        .message {
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            margin-bottom: 16px;
+            display: none;
+        }
+        .message.success {
+            display: block;
+            background: rgba(76, 175, 80, 0.2);
+            border: 1px solid #4caf50;
+            color: #81c784;
+        }
+        .message.error {
+            display: block;
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid #f44336;
+            color: #e57373;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Arquibancada 3D</h1>
+        <p class="subtitle">Entre para visualizar o projeto em 3D</p>
+
+        <div id="message" class="message"></div>
+
+        <form id="joinForm">
+            <div class="form-group">
+                <label for="name">Nome</label>
+                <input type="text" id="name" name="name" placeholder="Seu nome" required>
+            </div>
+            <div class="form-group">
+                <label for="email">E-mail</label>
+                <input type="email" id="email" name="email" placeholder="seu@email.com" required>
+            </div>
+            <button type="submit" class="btn">Entrar</button>
+        </form>
+
+        <div class="divider"><span>ou</span></div>
+
+        <a href="arquibancada.html" class="btn" style="display:block;text-align:center;text-decoration:none;">
+            Acessar como visitante
+        </a>
+
+        <div class="link">
+            <a href="arquibancada.html">Ver visualização 3D &rarr;</a>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('joinForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const name = document.getElementById('name').value.trim();
+            const email = document.getElementById('email').value.trim();
+            const messageEl = document.getElementById('message');
+
+            if (!name || !email) {
+                messageEl.className = 'message error';
+                messageEl.textContent = 'Por favor, preencha todos os campos.';
+                return;
+            }
+
+            // Store user info locally
+            localStorage.setItem('user', JSON.stringify({ name, email, joinedAt: new Date().toISOString() }));
+
+            messageEl.className = 'message success';
+            messageEl.textContent = 'Bem-vindo(a), ' + name + '! Redirecionando...';
+
+            setTimeout(function() {
+                window.location.href = 'arquibancada.html';
+            }, 1500);
+        });
+    </script>
+</body>
+</html>
