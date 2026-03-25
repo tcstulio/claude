@@ -1,7 +1,7 @@
 // © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-import { Transport } from './transport-base.js';
-import type { TransportConfig } from './transport-base.js';
+import { Transport } from './base.js';
+import type { TransportConfig } from './base.js';
 
 type McpToolCaller = (toolName: string, args: Record<string, unknown>) => Promise<unknown>;
 

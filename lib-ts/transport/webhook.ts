@@ -1,7 +1,7 @@
 // © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-import { Transport } from './transport-base.js';
-import type { TransportConfig, TransportJSON } from './transport-base.js';
+import { Transport } from './base.js';
+import type { TransportConfig, TransportJSON } from './base.js';
 
 type FetchFn = typeof globalThis.fetch;
 
