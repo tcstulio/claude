@@ -165,7 +165,7 @@ export function registerTransportRoutes(app: Application, deps: ServerDeps): voi
   });
 
   app.delete('/api/webhook/endpoints/:name', requireAuth, (req: Request, res: Response) => {
-    webhook.removeEndpoint(req.params.name);
+    webhook.removeEndpoint(String(req.params.name));
     res.json({ ok: true, endpoints: webhook.listEndpoints() });
   });
 

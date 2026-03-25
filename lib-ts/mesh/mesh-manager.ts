@@ -33,6 +33,7 @@ interface RouterLike {
 interface LedgerLike {
   addReceipt(rcpt: unknown): { balance: number };
   getReceipts(query: { peer: string }): unknown[];
+  getPeerBalance(peerId: string): number;
 }
 
 interface DataSourceRegistryLike {
@@ -103,6 +104,13 @@ interface SmartRouteResult {
   source: string;
 }
 
+/** Extract text from McpResult.content which may be string or array */
+function mcpText(result: McpResult | null | undefined): string {
+  if (!result?.content) return '';
+  if (typeof result.content === 'string') return result.content;
+  return result.content[0]?.text ?? '';
+}
+
 // ─── MeshManager ─────────────────────────────────────────────────────────────
 
 export class MeshManager extends EventEmitter {
@@ -154,12 +162,13 @@ export class MeshManager extends EventEmitter {
       maxHops: options.crawlerMaxHops,
       cacheTtl: options.crawlerCacheTtl,
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.federation = new FederatedSearch({
-      mesh: this,
+      mesh: this as any,
       fetch: this._fetch || globalThis.fetch,
       queryTimeout: options.queryTimeout,
       maxHops: options.federationMaxHops,
-      rateLimit: options.federationRateLimit,
+      rateLimit: options.federationRateLimit != null ? { maxQueries: options.federationRateLimit } : undefined,
     });
 
     // ─── Hub Council Layer ──────────────────────────────────────────
@@ -186,9 +195,9 @@ export class MeshManager extends EventEmitter {
 
     this.hubAdvisor = new HubAdvisor({
       hubRegistry: this.hubRegistry,
-      mesh: this,
+      mesh: this as any, // eslint-disable-line @typescript-eslint/no-explicit-any
       trust: this.trust,
-      callMcpTool: this._callMcpTool,
+      callMcpTool: (this._callMcpTool ?? undefined) as any,
       analysisInterval: parseInt(process.env.HUB_ADVISOR_INTERVAL || '300000', 10),
     });
 
@@ -298,7 +307,7 @@ export class MeshManager extends EventEmitter {
 
       for (const p of peers) {
         if (p.nodeId === this.nodeId) continue;
-        this.registry.upsert(p.nodeId, p);
+        this.registry.upsert(p.nodeId, p as Partial<import('./peer-registry.js').PeerInfo>);
       }
 
       // Descobre endpoints via mDNS do gateway (best-effort, async)
@@ -309,7 +318,7 @@ export class MeshManager extends EventEmitter {
         const channels = this._getOwnChannels();
         const announceMsg = protocol.announce(this.hubRole.capabilities, channels, {
           channel: 'mesh',
-          dataSources: this._dataSourceRegistry ? this._dataSourceRegistry.toAnnounce() : [],
+          dataSources: (this._dataSourceRegistry ? this._dataSourceRegistry.toAnnounce() : []) as Array<Record<string, unknown>>,
           platform: this._platformInfo?.platform || null,
         });
 
@@ -334,8 +343,7 @@ export class MeshManager extends EventEmitter {
 
     try {
       const result = await this._callMcpTool('get_logs', { service: 'gateway', lines: 50 });
-      const text = typeof result?.content?.[0]?.text === 'string'
-        ? result.content[0].text : '';
+      const text = mcpText(result);
       let output: { lines?: string[] };
       try { output = JSON.parse(text); } catch { return; }
       const lines = output.lines || [];
@@ -438,8 +446,7 @@ export class MeshManager extends EventEmitter {
         const cmd = `curl -s --connect-timeout 5 --max-time 15 -X POST ${peer.endpoint}/mcp -H "Content-Type: application/json" ${authHeader} -d "${mcpJson}" 2>&1`;
 
         const result = await this._callMcpTool('run_command', { command: cmd });
-        const text = typeof result?.content?.[0]?.text === 'string'
-          ? result.content[0].text : '';
+        const text = mcpText(result);
         let output: { output?: string };
         try { output = JSON.parse(text); } catch { output = { output: text }; }
 
@@ -546,7 +553,7 @@ export class MeshManager extends EventEmitter {
   }
 
   async pingPeer(nodeId: string): Promise<{ method: string; result: unknown }> {
-    const pingMsg = protocol.ping({ nodeId });
+    const pingMsg = protocol.ping({ nodeId, name: nodeId });
     const result = await this._sendToPeerRaw(nodeId, protocol.serialize(pingMsg));
     this.registry.touch(nodeId);
     return result;
@@ -607,8 +614,7 @@ export class MeshManager extends EventEmitter {
         const cmd = `curl -s --connect-timeout 5 --max-time ${maxTime} -X POST ${peer.endpoint}/api/message -H "Content-Type: application/json" ${authHeader} -d "${bodyJson}" 2>&1`;
 
         const result = await this._callMcpTool('run_command', { command: cmd });
-        const text = typeof result?.content?.[0]?.text === 'string'
-          ? result.content[0].text : '';
+        const text = mcpText(result);
         let output: { output?: string };
         try { output = JSON.parse(text); } catch { output = { output: text }; }
 
@@ -640,8 +646,7 @@ export class MeshManager extends EventEmitter {
         if (model) args.model = model;
         if (systemPrompt) args.system_prompt = systemPrompt;
         const result = await this._callMcpTool('send_prompt', args);
-        const text = typeof result?.content?.[0]?.text === 'string'
-          ? result.content[0].text : '';
+        const text = mcpText(result);
         let parsed: Record<string, unknown> | null;
         try { parsed = JSON.parse(text); } catch { parsed = null; }
 
@@ -722,20 +727,20 @@ export class MeshManager extends EventEmitter {
         this.emit('peer-event', message);
     }
 
-    return message;
+    return message as unknown as Record<string, unknown>;
   }
 
-  private _handlePing(message: Record<string, unknown>): void {
-    const from = message.from as { nodeId?: string } | undefined;
+  private _handlePing(message: protocol.Message): void {
+    const from = message.from;
     if (!from?.nodeId) return;
 
-    const pongMsg = protocol.pong(message.id as string, from);
+    const pongMsg = protocol.pong(message.id, from);
     this._sendToPeerRaw(from.nodeId, protocol.serialize(pongMsg))
       .catch(() => {});
   }
 
-  private _handleDiscover(message: Record<string, unknown>): void {
-    const from = message.from as { nodeId?: string; name?: string } | undefined;
+  private _handleDiscover(message: protocol.Message): void {
+    const from = message.from;
     if (!from?.nodeId) return;
 
     const payload = message.payload as { capabilities?: string[] } | undefined;
@@ -746,8 +751,8 @@ export class MeshManager extends EventEmitter {
 
     const channels = this._getOwnChannels();
     const announceMsg = protocol.announce(this.hubRole.capabilities, channels, {
-      replyTo: message.id,
-      dataSources: this._dataSourceRegistry ? this._dataSourceRegistry.toAnnounce() : [],
+      replyTo: message.id as string,
+      dataSources: (this._dataSourceRegistry ? this._dataSourceRegistry.toAnnounce() : []) as Array<Record<string, unknown>>,
       platform: this._platformInfo?.platform || null,
     });
 
@@ -755,14 +760,14 @@ export class MeshManager extends EventEmitter {
       .catch(() => {});
   }
 
-  private _handleAnnounce(message: Record<string, unknown>): void {
-    const from = message.from as { nodeId?: string; name?: string } | undefined;
+  private _handleAnnounce(message: protocol.Message): void {
+    const from = message.from;
     if (!from?.nodeId) return;
 
     const payload = message.payload as {
       capabilities?: string[];
       channels?: string[];
-      dataSources?: unknown[];
+      dataSources?: Array<{ name: string; type: string; scope?: string | null }>;
       platform?: string | null;
     } | undefined;
 
@@ -802,7 +807,7 @@ export class MeshManager extends EventEmitter {
 
     const ranking = this.trust.rankForDelegation(peers, {
       skill,
-      ledger: this._ledger,
+      ledger: (this._ledger ?? undefined) as any,
     });
 
     return eligibleOnly ? ranking.filter((r: { eligible: boolean }) => r.eligible) : ranking;
@@ -812,7 +817,7 @@ export class MeshManager extends EventEmitter {
     const seeds = this.registry.list().map(p => ({
       nodeId: p.nodeId,
       name: p.name,
-      endpoint: p.endpoint,
+      endpoint: p.endpoint ?? undefined,
     }));
 
     const result = await this.crawler.crawl(seeds, options);
@@ -823,7 +828,7 @@ export class MeshManager extends EventEmitter {
           this.registry.upsert(nodeId, {
             name: peerInfo.name as string,
             capabilities: (peerInfo.capabilities || peerInfo.infra || []) as string[],
-            endpoint: peerInfo.endpoint as string,
+            endpoint: (peerInfo.endpoint as string) ?? null,
             metadata: {
               discoveredVia: peerInfo.discoveredVia,
               discoveredAt: peerInfo.discoveredAt,
@@ -835,7 +840,7 @@ export class MeshManager extends EventEmitter {
       this.updateAllTrust();
     }
 
-    return result;
+    return result as unknown as Record<string, unknown>;
   }
 
   getPublicPeerList(): Array<Record<string, unknown>> {
@@ -862,16 +867,16 @@ export class MeshManager extends EventEmitter {
           name: this.nodeName,
           state: 'active',
           epoch: this.hubRole.epoch,
-          promotedBy: proposal.proposedBy,
+          promotedBy: proposal.proposedBy as string | null | undefined,
         });
         this.hubAdvisor.start();
         console.log(`[hub] Este nó foi PROMOVIDO a hub (epoch ${this.hubRole.epoch})`);
       } else {
         this.hubRegistry.upsert(targetId, {
-          name: proposal.targetNodeId,
+          name: proposal.targetNodeId as string | undefined,
           state: 'active',
-          epoch: proposal.epoch,
-          promotedBy: proposal.proposedBy,
+          epoch: proposal.epoch as number | undefined,
+          promotedBy: proposal.proposedBy as string | null | undefined,
         });
         console.log(`[hub] ${targetId} promovido a hub`);
       }
@@ -893,9 +898,9 @@ export class MeshManager extends EventEmitter {
   }
 
   getHubEndpoints(): Array<{ nodeId: string; name: string; endpoint: string }> {
-    return this.hubRegistry.getActive().map((h: Record<string, unknown>) => ({
-      nodeId: h.nodeId as string,
-      name: h.name as string,
+    return this.hubRegistry.getActive().map(h => ({
+      nodeId: h.nodeId,
+      name: h.name,
       endpoint: h.endpoint as string,
     })).filter(h => h.endpoint);
   }
@@ -917,7 +922,7 @@ export class MeshManager extends EventEmitter {
 
     const ranking = this.trust.rankForDelegation(peers, {
       skill: sourceName,
-      ledger: this._ledger,
+      ledger: (this._ledger ?? undefined) as any,
     });
 
     return eligibleOnly ? ranking.filter((r: { eligible: boolean }) => r.eligible) : ranking;

@@ -5,8 +5,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore TS1470 — import.meta is valid at runtime (package.json type=module)
+const __filename: string = fileURLToPath(import.meta.url);
+const __dirname: string = path.dirname(__filename);
 
 export const MSG_TYPES = [
   'PING', 'PONG', 'STATUS', 'ALERT', 'CMD', 'MSG', 'DISCOVER', 'ANNOUNCE',

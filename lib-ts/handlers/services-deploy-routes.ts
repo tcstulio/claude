@@ -161,7 +161,7 @@ export function registerServicesDeployRoutes(app: Application, deps: ServerDeps)
   });
 
   app.delete('/api/services/:nodeId', requireAuth, (req: Request, res: Response) => {
-    serviceRegistry.delete(req.params.nodeId);
+    serviceRegistry.delete(String(req.params.nodeId));
     res.json({ ok: true });
   });
 

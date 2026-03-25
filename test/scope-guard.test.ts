@@ -87,7 +87,7 @@ describe('Scope Guard Middleware', () => {
     it('private permite com scope correto', () => {
       return new Promise<void>((resolve) => {
         const middleware = requireCapability('whatsapp');
-        const req = mockReq({ grantedScopes: ['messaging'] });
+        const req = mockReq({ grantedScopes: ['whatsapp'] });
         const res = mockRes();
         middleware(req, res, () => resolve());
       });

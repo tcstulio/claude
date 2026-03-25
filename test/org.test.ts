@@ -64,7 +64,7 @@ describe('Organization', () => {
     it('erro ao convidar membro existente', () => {
       expect(
         () => org.invite('owner_1', 'owner_1'),
-      ).toThrow(/já é membro/);
+      ).toThrow(/already a member/);
     });
 
     it('membro não pode convidar', () => {
@@ -72,7 +72,7 @@ describe('Organization', () => {
       org.invite('peer_a', 'owner_1', 'member');
       expect(
         () => org.invite('peer_b', 'peer_a'),
-      ).toThrow(/Permissão negada/);
+      ).toThrow(/Permission denied/);
     });
 
     it('só owner pode convidar owner', () => {
@@ -80,7 +80,7 @@ describe('Organization', () => {
       org.invite('admin_1', 'owner_1', 'admin');
       expect(
         () => org.invite('peer_b', 'admin_1', 'owner'),
-      ).toThrow(/Apenas owners/);
+      ).toThrow(/Only owners/);
     });
 
     it('decline invite', () => {
@@ -103,7 +103,7 @@ describe('Organization', () => {
     it('não pode remover a si mesmo', () => {
       expect(
         () => org.removeMember('owner_1', 'owner_1'),
-      ).toThrow(/remover a si mesmo/);
+      ).toThrow(/Cannot remove yourself/);
     });
   });
 
@@ -118,7 +118,7 @@ describe('Organization', () => {
     it('último owner não pode sair', () => {
       expect(
         () => org.leave('owner_1'),
-      ).toThrow(/Último owner/);
+      ).toThrow(/Last owner/);
     });
   });
 
@@ -133,7 +133,7 @@ describe('Organization', () => {
       org.invite('peer_a', 'owner_1', 'member');
       expect(
         () => org.updatePolicies({}, 'peer_a'),
-      ).toThrow(/Permissão negada/);
+      ).toThrow(/Permission denied/);
     });
   });
 
@@ -270,7 +270,7 @@ describe('OrgRegistry', () => {
       const org = registry.create('Protected', 'self');
       expect(
         () => registry.remove(org.id, 'outsider'),
-      ).toThrow(/Permissão negada/);
+      ).toThrow(/Permission denied/);
     });
   });
 });

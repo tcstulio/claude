@@ -99,7 +99,7 @@ export function createLocalTools(deps: LocalToolsDeps = {}): LocalToolsLike {
       const fromKey = (args.fromPublicKey as string) || mesh?.registry.get(rcpt.from as string)?.metadata?.publicKey as string | undefined;
       const toKey = (args.toPublicKey as string) || mesh?.registry.get(rcpt.to as string)?.metadata?.publicKey as string | undefined;
 
-      const result = receiptLib.verifyReceipt(rcpt, { fromPublicKey: fromKey, toPublicKey: toKey });
+      const result = receiptLib.verifyReceipt(rcpt as unknown as import('./ledger/receipt.js').TaskReceipt, { fromPublicKey: fromKey, toPublicKey: toKey });
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     },
   };

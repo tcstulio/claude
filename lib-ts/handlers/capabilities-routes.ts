@@ -91,8 +91,8 @@ export function registerCapabilitiesRoutes(app: Application, deps: CapabilitiesR
 
   app.get('/api/data-sources/:name', (req: Request, res: Response) => {
     const name = req.params.name;
-    const localSource = dataSourceRegistry.get(name);
-    const networkPeers = mesh.registry.list({ dataSource: name });
+    const localSource = dataSourceRegistry.get(String(name));
+    const networkPeers = mesh.registry.list({ dataSource: String(name) });
 
     res.json({
       source: name,
@@ -110,13 +110,13 @@ export function registerCapabilitiesRoutes(app: Application, deps: CapabilitiesR
   // Roteamento inteligente por intent
   app.get('/api/network/route/:intent', (req: Request, res: Response) => {
     const intent = req.params.intent;
-    const result = mesh.querySmartRoute(intent);
+    const result = mesh.querySmartRoute(String(intent));
 
     res.json({
       intent,
       ...result,
       localPlatform: platformInfo.platform,
-      localHas: nodeCapabilities.includes(intent) || dataSourceRegistry.has(intent),
+      localHas: nodeCapabilities.includes(String(intent)) || dataSourceRegistry.has(String(intent)),
     });
   });
 

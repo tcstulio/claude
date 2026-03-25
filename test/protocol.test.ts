@@ -1,7 +1,7 @@
 // © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
 import { describe, it, expect } from 'vitest';
-import protocol from '../lib-ts/protocol.js';
+import * as protocol from '../lib-ts/protocol.js';
 
 describe('protocol', () => {
   describe('createMessage', () => {

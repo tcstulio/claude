@@ -24,7 +24,7 @@ export function registerInfraRoutes(app: Application, deps: ServerDeps): void {
 
   app.post('/api/infra/scan/:ip', requireAuth, async (req: Request, res: Response) => {
     try {
-      const results = await infraScanner.scanHost(req.params.ip);
+      const results = await infraScanner.scanHost(String(req.params.ip));
       res.json({ ip: req.params.ip, found: results.length, results });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -56,7 +56,7 @@ export function registerInfraRoutes(app: Application, deps: ServerDeps): void {
 
   app.post('/api/infra/test/:nodeId', requireAuth, async (req: Request, res: Response) => {
     try {
-      const result = await infraAdopter.test(req.params.nodeId);
+      const result = await infraAdopter.test(String(req.params.nodeId));
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
@@ -64,7 +64,7 @@ export function registerInfraRoutes(app: Application, deps: ServerDeps): void {
   });
 
   app.delete('/api/infra/adopted/:nodeId', requireAuth, (req: Request, res: Response) => {
-    infraAdopter.remove(req.params.nodeId);
+    infraAdopter.remove(String(req.params.nodeId));
     res.json({ ok: true, removed: req.params.nodeId });
   });
 
@@ -72,13 +72,13 @@ export function registerInfraRoutes(app: Application, deps: ServerDeps): void {
 
   app.post('/api/infra/ssh/:nodeId', requireAuth, async (req: Request, res: Response) => {
     const { command, commands } = req.body;
-    const peer = mesh.registry.get(req.params.nodeId);
+    const peer = mesh.registry.get(String(req.params.nodeId));
     if (!peer?.metadata?.isInfra) {
       return res.status(404).json({ error: 'Peer não é um serviço de infra adotado' });
     }
 
     // Dynamic import to avoid requiring ssh2 when not used
-    const { default: SSHTaskRunner } = await import('../infra/ssh-task.js');
+    const { SSHTaskRunner } = await import('../infra/ssh-task.js');
     const ssh = new SSHTaskRunner({
       host: peer.metadata.ip as string,
       port: peer.metadata.port === 22 ? 22 : undefined,
@@ -111,25 +111,25 @@ export function registerInfraRoutes(app: Application, deps: ServerDeps): void {
   app.post('/api/routes/:nodeId', requireAuth, (req: Request, res: Response) => {
     const { routes, auto } = req.body;
     if (auto) {
-      const detected = networkRoutes.autoRegister(req.params.nodeId, req.body);
+      const detected = networkRoutes.autoRegister(String(req.params.nodeId), req.body);
       return res.json({ nodeId: req.params.nodeId, routes: detected });
     }
     if (!routes || !Array.isArray(routes)) {
       return res.status(400).json({ error: 'Campo "routes" (array) é obrigatório' });
     }
-    networkRoutes.setRoutes(req.params.nodeId, routes);
-    res.json({ ok: true, routes: networkRoutes.getRoutes(req.params.nodeId) });
+    networkRoutes.setRoutes(String(req.params.nodeId), routes);
+    res.json({ ok: true, routes: networkRoutes.getRoutes(String(req.params.nodeId)) });
   });
 
   app.get('/api/routes/:nodeId/resolve', requireAuth, async (req: Request, res: Response) => {
     const force = req.query.force === 'true';
-    const result = await networkRoutes.resolve(req.params.nodeId, { force });
+    const result = await networkRoutes.resolve(String(req.params.nodeId), { force });
     if (!result) return res.status(404).json({ error: 'Nenhuma rota funcional encontrada' });
     res.json(result);
   });
 
   app.post('/api/routes/:nodeId/test', requireAuth, async (req: Request, res: Response) => {
-    const results = await networkRoutes.testAll(req.params.nodeId);
+    const results = await networkRoutes.testAll(String(req.params.nodeId));
     res.json({ nodeId: req.params.nodeId, results });
   });
 
@@ -149,7 +149,7 @@ export function registerInfraRoutes(app: Application, deps: ServerDeps): void {
   });
 
   app.get('/api/canary/:runId', requireAuth, (req: Request, res: Response) => {
-    const run = canary.getRun(req.params.runId);
+    const run = canary.getRun(String(req.params.runId));
     if (!run) return res.status(404).json({ error: 'Run não encontrado' });
     res.json(run);
   });
@@ -166,7 +166,7 @@ export function registerInfraRoutes(app: Application, deps: ServerDeps): void {
       return res.status(400).json({ error: 'Campo "approved" (boolean) é obrigatório' });
     }
     try {
-      const run = canary.approve(req.params.runId, approved, reason);
+      const run = canary.approve(String(req.params.runId), approved, reason);
       res.json(run);
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });

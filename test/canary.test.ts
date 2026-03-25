@@ -82,7 +82,7 @@ describe('CanaryRunner', () => {
 
       const run = await c.start({ version: '0.5.0', repo: 'https://repo.git' });
       expect(run.state).toBe('failed');
-      expect(run.results.error.includes('Nenhum nó')).toBeTruthy();
+      expect(run.results.error.includes('No compute node')).toBeTruthy();
     });
 
     it('emite evento canary-created', async () => {
@@ -165,7 +165,7 @@ describe('CanaryRunner', () => {
 
       expect(
         () => canary.approve(run.id, true),
-      ).toThrow(/não está em estado 'passed'/);
+      ).toThrow(/not in 'passed' state/);
     });
   });
 

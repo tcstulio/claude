@@ -1,7 +1,7 @@
 // © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
 import { describe, it, expect } from 'vitest';
-import caps from '../lib-ts/capabilities.js';
+import * as caps from '../lib-ts/capabilities.js';
 
 describe('Capabilities', () => {
   describe('classify', () => {

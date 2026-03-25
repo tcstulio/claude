@@ -173,7 +173,7 @@ describe('FederatedSearch', () => {
 
       await expect(
         () => fed.relay('peer_z', 'Hello')
-      ).rejects.toThrow(/Sem rota/);
+      ).rejects.toThrow(/No route/);
     });
 
     it('relay via hub intermediário', async () => {

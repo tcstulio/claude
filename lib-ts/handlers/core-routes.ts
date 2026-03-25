@@ -76,7 +76,7 @@ export function registerCoreRoutes(app: Application, deps: CoreRouteDeps): void 
   // Proxy MCP genérico
   app.post('/api/mcp/:tool', requireAuth, async (req: Request, res: Response) => {
     try {
-      const data = await callMcpTool(req.params.tool, req.body, req);
+      const data = await callMcpTool(String(req.params.tool), req.body, req);
       res.json(data);
     } catch (err) {
       res.status(502).json({ error: `Falha ao chamar tool "${req.params.tool}"`, detail: (err as Error).message });

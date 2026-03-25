@@ -29,7 +29,7 @@ export function registerOrgEconomyRoutes(app: Application, deps: OrgEconomyDeps)
   });
 
   app.get('/api/org/:orgId', requireAuth, (req: Request, res: Response) => {
-    const org = orgRegistry.get(req.params.orgId);
+    const org = orgRegistry.get(String(req.params.orgId));
     if (!org) return res.status(404).json({ error: 'Org não encontrada' });
     res.json({
       ...org.toJSON() as Record<string, unknown>,
@@ -41,7 +41,7 @@ export function registerOrgEconomyRoutes(app: Application, deps: OrgEconomyDeps)
     const { nodeId, role } = req.body;
     if (!nodeId) return res.status(400).json({ error: 'Campo "nodeId" é obrigatório' });
 
-    const org = orgRegistry.get(req.params.orgId);
+    const org = orgRegistry.get(String(req.params.orgId));
     if (!org) return res.status(404).json({ error: 'Org não encontrada' });
 
     try {
@@ -55,7 +55,7 @@ export function registerOrgEconomyRoutes(app: Application, deps: OrgEconomyDeps)
   });
 
   app.post('/api/org/:orgId/accept', requireAuth, (req: Request, res: Response) => {
-    const org = orgRegistry.get(req.params.orgId);
+    const org = orgRegistry.get(String(req.params.orgId));
     if (!org) return res.status(404).json({ error: 'Org não encontrada' });
 
     try {
@@ -69,7 +69,7 @@ export function registerOrgEconomyRoutes(app: Application, deps: OrgEconomyDeps)
   });
 
   app.put('/api/org/:orgId/policies', requireAuth, (req: Request, res: Response) => {
-    const org = orgRegistry.get(req.params.orgId);
+    const org = orgRegistry.get(String(req.params.orgId));
     if (!org) return res.status(404).json({ error: 'Org não encontrada' });
 
     try {
@@ -83,12 +83,12 @@ export function registerOrgEconomyRoutes(app: Application, deps: OrgEconomyDeps)
   });
 
   app.delete('/api/org/:orgId/member/:nodeId', requireAuth, (req: Request, res: Response) => {
-    const org = orgRegistry.get(req.params.orgId);
+    const org = orgRegistry.get(String(req.params.orgId));
     if (!org) return res.status(404).json({ error: 'Org não encontrada' });
 
     try {
       const removedBy = req.peer?.nodeId || protocol.NODE_ID;
-      org.removeMember(req.params.nodeId, removedBy);
+      org.removeMember(String(req.params.nodeId), removedBy);
       orgRegistry.save();
       res.json({ ok: true });
     } catch (err) {
@@ -97,15 +97,15 @@ export function registerOrgEconomyRoutes(app: Application, deps: OrgEconomyDeps)
   });
 
   app.get('/api/org/reputation/:nodeId', (req: Request, res: Response) => {
-    const boost = orgRegistry.getTrustBoost(req.params.nodeId);
-    const orgs = orgRegistry.getPublicOrgInfo(req.params.nodeId);
+    const boost = orgRegistry.getTrustBoost(String(req.params.nodeId));
+    const orgs = orgRegistry.getPublicOrgInfo(String(req.params.nodeId));
     res.json({ nodeId: req.params.nodeId, trustBoost: boost, orgs });
   });
 
   app.delete('/api/org/:orgId', requireAuth, (req: Request, res: Response) => {
     try {
       const removedBy = req.peer?.nodeId || protocol.NODE_ID;
-      orgRegistry.remove(req.params.orgId, removedBy);
+      orgRegistry.remove(String(req.params.orgId), removedBy);
       res.json({ ok: true });
     } catch (err) {
       res.status(403).json({ error: (err as Error).message });
@@ -177,7 +177,7 @@ export function registerOrgEconomyRoutes(app: Application, deps: OrgEconomyDeps)
   });
 
   app.get('/api/ledger/peer/:nodeId', (req: Request, res: Response) => {
-    const balance = ledger.getPeerBalance(req.params.nodeId);
+    const balance = ledger.getPeerBalance(String(req.params.nodeId));
     const receipts = ledger.getReceipts({ peer: req.params.nodeId });
     res.json({
       peerId: req.params.nodeId,

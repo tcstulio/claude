@@ -33,7 +33,7 @@ export function registerMeshRoutes(app: Application, deps: ServerDeps): void {
   app.post('/api/mesh/ping/:nodeId', requireAuth, async (req: Request, res: Response) => {
     try {
       const start = Date.now();
-      const result = await mesh.pingPeer(req.params.nodeId);
+      const result = await mesh.pingPeer(String(req.params.nodeId));
       res.json({ ok: true, latency: Date.now() - start, result });
     } catch (err) {
       res.status(502).json({ error: 'Ping falhou', detail: (err as Error).message });
@@ -45,7 +45,7 @@ export function registerMeshRoutes(app: Application, deps: ServerDeps): void {
     try {
       const { message } = req.body;
       if (!message) return res.status(400).json({ error: 'Campo "message" é obrigatório' });
-      const result = await mesh.sendToPeer(req.params.nodeId, message);
+      const result = await mesh.sendToPeer(String(req.params.nodeId), message);
       res.json({ ok: true, result });
     } catch (err) {
       res.status(502).json({ error: 'Envio falhou', detail: (err as Error).message });
@@ -58,7 +58,7 @@ export function registerMeshRoutes(app: Application, deps: ServerDeps): void {
       const { prompt, text, system_prompt, model, timeout } = req.body;
       const promptText = prompt || text;
       if (!promptText) return res.status(400).json({ error: 'Campo "prompt" ou "text" é obrigatório' });
-      const result = await mesh.sendPrompt(req.params.nodeId, promptText, {
+      const result = await mesh.sendPrompt(String(req.params.nodeId), promptText, {
         systemPrompt: system_prompt,
         model,
         timeoutMs: timeout || 30000,
@@ -73,7 +73,7 @@ export function registerMeshRoutes(app: Application, deps: ServerDeps): void {
   app.post('/api/mesh/admin-token/:nodeId', requireAuth, async (req: Request, res: Response) => {
     try {
       const { admin_token } = req.body;
-      const result = await mesh.requestAdminToken(req.params.nodeId, { adminToken: admin_token });
+      const result = await mesh.requestAdminToken(String(req.params.nodeId), { adminToken: admin_token });
       res.json({ ok: true, ...result as Record<string, unknown> });
     } catch (err) {
       res.status(502).json({ error: 'Falha ao obter admin token', detail: (err as Error).message });
@@ -89,7 +89,7 @@ export function registerMeshRoutes(app: Application, deps: ServerDeps): void {
       if (name) info.name = name;
       if (capabilities) info.capabilities = capabilities;
       if (channels) info.channels = channels;
-      const peer = mesh.registry.upsert(req.params.nodeId, info);
+      const peer = mesh.registry.upsert(String(req.params.nodeId), info);
       res.json({ ok: true, peer });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
@@ -135,7 +135,7 @@ export function registerMeshRoutes(app: Application, deps: ServerDeps): void {
 
   app.get('/api/network/rank/:skill', requireAuth, (req: Request, res: Response) => {
     const eligibleOnly = req.query.all !== 'true';
-    const ranking = mesh.queryBySkill(req.params.skill, { eligibleOnly });
+    const ranking = mesh.queryBySkill(String(req.params.skill), { eligibleOnly });
     res.json({ skill: req.params.skill, ranking });
   });
 

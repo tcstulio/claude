@@ -246,16 +246,16 @@ describe('SSHTaskRunner', () => {
   describe('_validateCommand', () => {
     it('bloqueia comandos perigosos', () => {
       const ssh = new SSHTaskRunner({ host: 'test' });
-      const result = ssh._validateCommand('rm -rf /');
+      const result = (ssh as any)._validate('rm -rf /');
       expect(!result.ok).toBeTruthy();
-      expect(result.error.includes('bloqueado')).toBeTruthy();
+      expect(result.error.includes('Blocked')).toBeTruthy();
     });
 
     it('permite comandos normais', () => {
       const ssh = new SSHTaskRunner({ host: 'test' });
-      expect(ssh._validateCommand('ls -la').ok).toBeTruthy();
-      expect(ssh._validateCommand('df -h').ok).toBeTruthy();
-      expect(ssh._validateCommand('docker ps').ok).toBeTruthy();
+      expect((ssh as any)._validate('ls -la').ok).toBeTruthy();
+      expect((ssh as any)._validate('df -h').ok).toBeTruthy();
+      expect((ssh as any)._validate('docker ps').ok).toBeTruthy();
     });
 
     it('allowlist restringe comandos', () => {
@@ -263,8 +263,8 @@ describe('SSHTaskRunner', () => {
         host: 'test',
         allowedCommands: ['ls', 'df', 'uptime'],
       });
-      expect(ssh._validateCommand('ls -la').ok).toBeTruthy();
-      expect(!ssh._validateCommand('rm file.txt').ok).toBeTruthy();
+      expect((ssh as any)._validate('ls -la').ok).toBeTruthy();
+      expect(!(ssh as any)._validate('rm file.txt').ok).toBeTruthy();
     });
   });
 
@@ -277,7 +277,7 @@ describe('SSHTaskRunner', () => {
         keyPath: '/home/user/.ssh/id_ed25519',
       });
 
-      const args = ssh._buildSSHArgs('uptime');
+      const args = (ssh as any)._buildArgs('uptime');
       expect(args.includes('-p')).toBeTruthy();
       expect(args.includes('2222')).toBeTruthy();
       expect(args.includes('-i')).toBeTruthy();
