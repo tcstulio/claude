@@ -9,8 +9,9 @@
     "dev": "node --watch server.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:js": "node --test test/*.test.js",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
     "test:manual": "./test/manual.sh"
   },
   "dependencies": {
