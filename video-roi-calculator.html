@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calculadora ROI de Vídeo</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            min-height: 100vh;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            font-size: 2rem;
+            margin-bottom: 8px;
+            background: linear-gradient(90deg, #4fc3f7, #ab47bc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 30px;
+            font-size: 0.95rem;
+        }
+        .input-section {
+            background: rgba(255,255,255,0.06);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        .input-section h2 {
+            font-size: 1.1rem;
+            color: #4fc3f7;
+            margin-bottom: 16px;
+        }
+        .input-row {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: end;
+        }
+        .input-group {
+            flex: 1;
+            min-width: 200px;
+        }
+        .input-group label {
+            display: block;
+            font-size: 0.85rem;
+            color: #aaa;
+            margin-bottom: 6px;
+        }
+        .input-group input, .input-group select {
+            width: 100%;
+            padding: 12px 16px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.15);
+            background: rgba(255,255,255,0.08);
+            color: #fff;
+            font-size: 1.1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .input-group input:focus, .input-group select:focus {
+            border-color: #4fc3f7;
+        }
+        .input-group input::placeholder { color: #666; }
+        .platforms-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .platform-card {
+            background: rgba(255,255,255,0.06);
+            border-radius: 16px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.08);
+            transition: transform 0.2s, border-color 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+        .platform-card:hover {
+            transform: translateY(-2px);
+            border-color: rgba(255,255,255,0.2);
+        }
+        .platform-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .platform-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+        .platform-name {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        .platform-cpm {
+            font-size: 0.8rem;
+            color: #888;
+        }
+        .views-needed {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 12px 0 4px;
+        }
+        .views-label {
+            font-size: 0.8rem;
+            color: #888;
+            margin-bottom: 12px;
+        }
+        .progress-bar-bg {
+            height: 6px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+        .progress-bar {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.6s ease;
+        }
+        .difficulty-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+        .note-box {
+            background: rgba(171, 71, 188, 0.1);
+            border: 1px solid rgba(171, 71, 188, 0.25);
+            border-radius: 12px;
+            padding: 16px;
+            font-size: 0.85rem;
+            line-height: 1.6;
+            color: #ccc;
+        }
+        .note-box strong { color: #ab47bc; }
+        .summary-section {
+            background: rgba(255,255,255,0.06);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        .summary-section h2 {
+            font-size: 1.1rem;
+            color: #4fc3f7;
+            margin-bottom: 16px;
+        }
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .summary-table th, .summary-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            font-size: 0.9rem;
+        }
+        .summary-table th {
+            color: #888;
+            font-weight: 500;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .summary-table tr:last-child td { border-bottom: none; }
+        .highlight { color: #4fc3f7; font-weight: 600; }
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .tag-easy { background: rgba(76,175,80,0.2); color: #66bb6a; }
+        .tag-medium { background: rgba(255,193,7,0.2); color: #ffc107; }
+        .tag-hard { background: rgba(244,67,54,0.2); color: #ef5350; }
+        .tag-extreme { background: rgba(156,39,176,0.2); color: #ce93d8; }
+
+        /* YouTube */
+        .yt .platform-icon { background: #ff0000; color: #fff; }
+        .yt .views-needed { color: #ff4444; }
+        .yt .progress-bar { background: linear-gradient(90deg, #ff0000, #ff4444); }
+
+        /* Instagram */
+        .ig .platform-icon { background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888); color: #fff; }
+        .ig .views-needed { color: #e6683c; }
+        .ig .progress-bar { background: linear-gradient(90deg, #f09433, #dc2743); }
+
+        /* TikTok */
+        .tt .platform-icon { background: #000; color: #fff; border: 1px solid #333; }
+        .tt .views-needed { color: #69c9d0; }
+        .tt .progress-bar { background: linear-gradient(90deg, #69c9d0, #ee1d52); }
+
+        /* Facebook */
+        .fb .platform-icon { background: #1877f2; color: #fff; }
+        .fb .views-needed { color: #4599ff; }
+        .fb .progress-bar { background: linear-gradient(90deg, #1877f2, #4599ff); }
+
+        /* X/Twitter */
+        .tw .platform-icon { background: #000; color: #fff; border: 1px solid #333; }
+        .tw .views-needed { color: #aaa; }
+        .tw .progress-bar { background: linear-gradient(90deg, #555, #aaa); }
+
+        /* Kwai */
+        .kw .platform-icon { background: #ff6a00; color: #fff; }
+        .kw .views-needed { color: #ff8c33; }
+        .kw .progress-bar { background: linear-gradient(90deg, #ff6a00, #ff8c33); }
+
+        /* Spotify */
+        .sp .platform-icon { background: #1db954; color: #fff; }
+        .sp .views-needed { color: #1db954; }
+        .sp .progress-bar { background: linear-gradient(90deg, #1db954, #1ed760); }
+
+        /* Apple Music */
+        .am .platform-icon { background: linear-gradient(45deg, #fc3c44, #a833b9); color: #fff; }
+        .am .views-needed { color: #fc3c44; }
+        .am .progress-bar { background: linear-gradient(90deg, #fc3c44, #a833b9); }
+
+        /* Deezer */
+        .dz .platform-icon { background: #a238ff; color: #fff; }
+        .dz .views-needed { color: #a238ff; }
+        .dz .progress-bar { background: linear-gradient(90deg, #a238ff, #c77dff); }
+
+        .music-section {
+            background: rgba(29, 185, 84, 0.06);
+            border: 1px solid rgba(29, 185, 84, 0.2);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        .music-section h2 {
+            font-size: 1.1rem;
+            color: #1db954;
+            margin-bottom: 6px;
+        }
+        .music-section .music-subtitle {
+            font-size: 0.85rem;
+            color: #888;
+            margin-bottom: 16px;
+        }
+        .music-insight {
+            background: rgba(29, 185, 84, 0.08);
+            border: 1px solid rgba(29, 185, 84, 0.15);
+            border-radius: 12px;
+            padding: 16px;
+            margin-top: 16px;
+            font-size: 0.85rem;
+            line-height: 1.7;
+            color: #ccc;
+        }
+        .music-insight strong { color: #1db954; }
+        .music-insight h3 { color: #1db954; font-size: 0.95rem; margin-bottom: 10px; }
+        .revenue-source {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .revenue-source:last-child { border-bottom: none; }
+        .revenue-name { font-weight: 500; }
+        .revenue-pct {
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+        .revenue-bar {
+            height: 8px;
+            border-radius: 4px;
+            margin-top: 4px;
+            background: rgba(255,255,255,0.05);
+            overflow: hidden;
+        }
+        .revenue-fill {
+            height: 100%;
+            border-radius: 4px;
+            background: linear-gradient(90deg, #1db954, #4fc3f7);
+        }
+
+        @media (max-width: 600px) {
+            h1 { font-size: 1.5rem; }
+            .platforms-grid { grid-template-columns: 1fr; }
+            .input-row { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Calculadora de ROI de Video</h1>
+        <p class="subtitle">Quantas views seu video precisa para pagar o investimento?</p>
+
+        <div class="input-section">
+            <h2>Dados do Video</h2>
+            <div class="input-row">
+                <div class="input-group">
+                    <label>Custo de Producao (R$)</label>
+                    <input type="number" id="cost" value="3000" min="0" step="100" placeholder="Ex: 3000">
+                </div>
+                <div class="input-group">
+                    <label>Moeda</label>
+                    <select id="currency">
+                        <option value="BRL" selected>R$ (Real)</option>
+                        <option value="USD">$ (Dolar)</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Nicho do Canal</label>
+                    <select id="niche">
+                        <option value="general">Geral / Entretenimento</option>
+                        <option value="tech">Tecnologia</option>
+                        <option value="finance">Financas / Investimentos</option>
+                        <option value="beauty">Beleza / Moda</option>
+                        <option value="gaming">Games</option>
+                        <option value="education">Educacao</option>
+                        <option value="fitness">Fitness / Saude</option>
+                        <option value="music">Musica</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="platforms-grid" id="platforms"></div>
+
+        <div class="music-section" id="musicSection" style="display:none">
+            <h2>Plataformas de Streaming Musical</h2>
+            <p class="music-subtitle">Onde musicos realmente monetizam: streams, Content ID e sincronizacao</p>
+            <div class="platforms-grid" id="musicPlatforms"></div>
+
+            <div class="music-insight">
+                <h3>Onde Musicos Realmente Ganham Dinheiro</h3>
+                <div class="revenue-source">
+                    <div>
+                        <div class="revenue-name">Shows e Eventos ao Vivo</div>
+                        <div style="font-size:0.75rem;color:#888">Caches, bilheteria, merch no local</div>
+                    </div>
+                    <div class="revenue-pct" style="color:#1db954">~40%</div>
+                </div>
+                <div class="revenue-bar"><div class="revenue-fill" style="width:40%"></div></div>
+
+                <div class="revenue-source">
+                    <div>
+                        <div class="revenue-name">Sync / Licenciamento</div>
+                        <div style="font-size:0.75rem;color:#888">Novelas, filmes, publicidade, games</div>
+                    </div>
+                    <div class="revenue-pct" style="color:#4fc3f7">~20%</div>
+                </div>
+                <div class="revenue-bar"><div class="revenue-fill" style="width:20%"></div></div>
+
+                <div class="revenue-source">
+                    <div>
+                        <div class="revenue-name">YouTube Content ID</div>
+                        <div style="font-size:0.75rem;color:#888">Outros usam sua musica em videos deles</div>
+                    </div>
+                    <div class="revenue-pct" style="color:#ff4444">~15%</div>
+                </div>
+                <div class="revenue-bar"><div class="revenue-fill" style="width:15%"></div></div>
+
+                <div class="revenue-source">
+                    <div>
+                        <div class="revenue-name">Streaming (Spotify, Apple, etc)</div>
+                        <div style="font-size:0.75rem;color:#888">Pagamento por stream</div>
+                    </div>
+                    <div class="revenue-pct" style="color:#a238ff">~15%</div>
+                </div>
+                <div class="revenue-bar"><div class="revenue-fill" style="width:15%"></div></div>
+
+                <div class="revenue-source">
+                    <div>
+                        <div class="revenue-name">Merch, Patrocinios e Parcerias</div>
+                        <div style="font-size:0.75rem;color:#888">Marcas, produtos proprios</div>
+                    </div>
+                    <div class="revenue-pct" style="color:#ff8c33">~10%</div>
+                </div>
+                <div class="revenue-bar"><div class="revenue-fill" style="width:10%"></div></div>
+
+                <br>
+                <strong>Resumo:</strong> Streaming puro paga muito pouco. Um artista precisa de ~166.000 streams no Spotify para ganhar R$3.000.
+                O verdadeiro poder de um videoclipe e gerar <strong>visibilidade</strong> que alimenta shows, sync deals e Content ID.
+                Um clipe viral que coloca a musica em 10.000 videos no YouTube via Content ID pode gerar mais receita do que 1M de views no proprio clipe.
+            </div>
+        </div>
+
+        <div class="summary-section">
+            <h2>Resumo Comparativo</h2>
+            <table class="summary-table">
+                <thead>
+                    <tr>
+                        <th>Plataforma</th>
+                        <th>CPM Estimado</th>
+                        <th>Views Necessarias</th>
+                        <th>Dificuldade</th>
+                    </tr>
+                </thead>
+                <tbody id="summaryBody"></tbody>
+            </table>
+        </div>
+
+        <div class="note-box">
+            <strong>Importante:</strong> Estes valores sao estimativas baseadas em CPMs medios para criadores no Brasil.
+            O CPM real varia muito conforme nicho, audiencia, sazonalidade, taxa de monetizacao e engajamento.
+            <br><br>
+            <strong>O que e CPM?</strong> CPM = Custo Por Mil impressoes. E quanto a plataforma paga ao criador a cada 1.000 visualizacoes monetizadas.
+            No YouTube, apenas ~55% das views sao monetizadas (com anuncios). No TikTok e Instagram, a monetizacao direta e bem menor.
+            <br><br>
+            <strong>Dica:</strong> Receitas indiretas (clientes, parcerias, vendas, branding) costumam ser muito maiores que a monetizacao direta por views.
+            Um video que gera 1 cliente de R$5.000 ja pagou o investimento, independente das views.
+        </div>
+    </div>
+
+    <script>
+        // CPM data (R$) by platform and niche
+        // Format: { base: base CPM in BRL, nicheMultipliers: {} }
+        const platformData = {
+            youtube: {
+                name: 'YouTube',
+                icon: '▶',
+                class: 'yt',
+                // YouTube pays ~55% of ad revenue, CPM in Brazil typically R$3-15
+                baseCPM: { BRL: 6.0, USD: 4.0 },
+                nicheMultiplier: {
+                    general: 1.0, tech: 1.6, finance: 2.5, beauty: 1.3,
+                    gaming: 0.8, education: 1.4, fitness: 1.2, music: 0.5
+                },
+                monetizationRate: 0.55, // ~55% of views are monetized
+                note: '55% das views monetizadas'
+            },
+            instagram: {
+                name: 'Instagram Reels',
+                icon: '◎',
+                class: 'ig',
+                // Instagram Reels bonus/ads program pays much less
+                baseCPM: { BRL: 1.5, USD: 1.0 },
+                nicheMultiplier: {
+                    general: 1.0, tech: 1.2, finance: 1.5, beauty: 1.8,
+                    gaming: 0.6, education: 1.0, fitness: 1.4, music: 0.7
+                },
+                monetizationRate: 0.30,
+                note: 'Programa de bonus, ~30% monetizado'
+            },
+            tiktok: {
+                name: 'TikTok',
+                icon: '♪',
+                class: 'tt',
+                // TikTok Creator Fund pays very little
+                baseCPM: { BRL: 0.8, USD: 0.5 },
+                nicheMultiplier: {
+                    general: 1.0, tech: 1.3, finance: 1.5, beauty: 1.2,
+                    gaming: 0.9, education: 1.1, fitness: 1.1, music: 1.2
+                },
+                monetizationRate: 0.40,
+                note: 'Fundo de Criadores, ~40% elegivel'
+            },
+            facebook: {
+                name: 'Facebook',
+                icon: 'f',
+                class: 'fb',
+                baseCPM: { BRL: 4.0, USD: 3.0 },
+                nicheMultiplier: {
+                    general: 1.0, tech: 1.3, finance: 2.0, beauty: 1.1,
+                    gaming: 0.7, education: 1.2, fitness: 1.1, music: 0.6
+                },
+                monetizationRate: 0.45,
+                note: 'In-stream ads, ~45% monetizado'
+            },
+            twitter: {
+                name: 'X (Twitter)',
+                icon: '𝕏',
+                class: 'tw',
+                baseCPM: { BRL: 1.0, USD: 0.7 },
+                nicheMultiplier: {
+                    general: 1.0, tech: 1.5, finance: 2.0, beauty: 0.8,
+                    gaming: 0.7, education: 1.2, fitness: 0.9, music: 0.5
+                },
+                monetizationRate: 0.25,
+                note: 'Ads revenue share, ~25% monetizado'
+            },
+            kwai: {
+                name: 'Kwai',
+                icon: 'K',
+                class: 'kw',
+                baseCPM: { BRL: 0.5, USD: 0.3 },
+                nicheMultiplier: {
+                    general: 1.0, tech: 1.0, finance: 1.2, beauty: 1.1,
+                    gaming: 0.8, education: 0.9, fitness: 1.0, music: 0.6
+                },
+                monetizationRate: 0.35,
+                note: 'Programa de recompensas, ~35% elegivel'
+            }
+        };
+
+        // Music-specific platforms (only shown when niche = music)
+        const musicPlatformData = {
+            youtube_contentid: {
+                name: 'YouTube Content ID',
+                icon: '©',
+                class: 'yt',
+                description: 'Quando outros usam sua musica em videos deles',
+                revenuePerStream: { BRL: 0.007, USD: 0.005 },
+                note: 'Revenue share de videos que usam sua musica'
+            },
+            spotify: {
+                name: 'Spotify',
+                icon: '●',
+                class: 'sp',
+                description: 'Streams na plataforma',
+                revenuePerStream: { BRL: 0.018, USD: 0.004 },
+                note: '~R$0,015-0,020 por stream no BR'
+            },
+            apple_music: {
+                name: 'Apple Music',
+                icon: '♫',
+                class: 'am',
+                description: 'Streams na plataforma',
+                revenuePerStream: { BRL: 0.04, USD: 0.008 },
+                note: '~R$0,035-0,045 por stream no BR'
+            },
+            deezer: {
+                name: 'Deezer',
+                icon: '♬',
+                class: 'dz',
+                description: 'Streams na plataforma',
+                revenuePerStream: { BRL: 0.02, USD: 0.004 },
+                note: '~R$0,015-0,025 por stream no BR'
+            },
+            tiktok_sound: {
+                name: 'TikTok (som usado)',
+                icon: '♪',
+                class: 'tt',
+                description: 'Quando sua musica vira trend/som',
+                revenuePerStream: { BRL: 0.0003, USD: 0.00006 },
+                note: 'Paga quase nada, mas gera streams em outras plataformas'
+            }
+        };
+
+        function formatNumber(n) {
+            if (n >= 1000000) return (n / 1000000).toFixed(1).replace('.0', '') + 'M';
+            if (n >= 1000) return (n / 1000).toFixed(0) + 'K';
+            return n.toFixed(0);
+        }
+
+        function formatNumberFull(n) {
+            return n.toLocaleString('pt-BR');
+        }
+
+        function getDifficulty(views) {
+            if (views < 100000) return { label: 'Alcancavel', class: 'tag-easy', percent: 80 };
+            if (views < 500000) return { label: 'Moderado', class: 'tag-medium', percent: 55 };
+            if (views < 2000000) return { label: 'Dificil', class: 'tag-hard', percent: 30 };
+            return { label: 'Muito Dificil', class: 'tag-extreme', percent: 10 };
+        }
+
+        function calculate() {
+            const cost = parseFloat(document.getElementById('cost').value) || 0;
+            const currency = document.getElementById('currency').value;
+            const niche = document.getElementById('niche').value;
+            const currencySymbol = currency === 'BRL' ? 'R$' : '$';
+            const isMusic = niche === 'music';
+
+            const platformsContainer = document.getElementById('platforms');
+            const summaryBody = document.getElementById('summaryBody');
+            const musicSection = document.getElementById('musicSection');
+            const musicPlatforms = document.getElementById('musicPlatforms');
+            platformsContainer.innerHTML = '';
+            summaryBody.innerHTML = '';
+            musicPlatforms.innerHTML = '';
+
+            musicSection.style.display = isMusic ? 'block' : 'none';
+
+            // Render music streaming platforms
+            if (isMusic) {
+                Object.entries(musicPlatformData).forEach(([key, platform]) => {
+                    const revenuePerStream = platform.revenuePerStream[currency];
+                    const streamsNeeded = cost > 0 ? Math.ceil(cost / revenuePerStream) : 0;
+                    const difficulty = getDifficulty(streamsNeeded);
+
+                    const card = document.createElement('div');
+                    card.className = `platform-card ${platform.class}`;
+                    card.innerHTML = `
+                        <div class="platform-header">
+                            <div class="platform-icon">${platform.icon}</div>
+                            <div>
+                                <div class="platform-name">${platform.name}</div>
+                                <div class="platform-cpm">${currencySymbol} ${revenuePerStream.toFixed(4)}/stream | ${platform.note}</div>
+                            </div>
+                        </div>
+                        <div class="views-needed">${formatNumber(streamsNeeded)}</div>
+                        <div class="views-label">${formatNumberFull(streamsNeeded)} streams para equilibrar ${currencySymbol} ${formatNumberFull(cost)}</div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar" style="width: ${difficulty.percent}%"></div>
+                        </div>
+                        <div class="difficulty-label ${difficulty.class}">${difficulty.label}</div>
+                    `;
+                    musicPlatforms.appendChild(card);
+
+                    // Add to summary
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td><strong>${platform.name}</strong></td>
+                        <td>${currencySymbol} ${revenuePerStream.toFixed(4)}/stream</td>
+                        <td class="highlight">${formatNumberFull(streamsNeeded)}</td>
+                        <td><span class="tag ${difficulty.class}">${difficulty.label}</span></td>
+                    `;
+                    summaryBody.appendChild(row);
+                });
+            }
+
+            Object.entries(platformData).forEach(([key, platform]) => {
+                const baseCPM = platform.baseCPM[currency];
+                const multiplier = platform.nicheMultiplier[niche];
+                const effectiveCPM = baseCPM * multiplier;
+                const revenuePerView = (effectiveCPM / 1000) * platform.monetizationRate;
+                const viewsNeeded = cost > 0 ? Math.ceil(cost / revenuePerView) : 0;
+                const difficulty = getDifficulty(viewsNeeded);
+
+                // Platform card
+                const card = document.createElement('div');
+                card.className = `platform-card ${platform.class}`;
+                card.innerHTML = `
+                    <div class="platform-header">
+                        <div class="platform-icon">${platform.icon}</div>
+                        <div>
+                            <div class="platform-name">${platform.name}</div>
+                            <div class="platform-cpm">CPM efetivo: ${currencySymbol} ${effectiveCPM.toFixed(2)} | ${platform.note}</div>
+                        </div>
+                    </div>
+                    <div class="views-needed">${formatNumber(viewsNeeded)}</div>
+                    <div class="views-label">${formatNumberFull(viewsNeeded)} views necessarias para equilibrar ${currencySymbol} ${formatNumberFull(cost)}</div>
+                    <div class="progress-bar-bg">
+                        <div class="progress-bar" style="width: ${difficulty.percent}%"></div>
+                    </div>
+                    <div class="difficulty-label ${difficulty.class}">${difficulty.label}</div>
+                `;
+                platformsContainer.appendChild(card);
+
+                // Summary row
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td><strong>${platform.name}</strong></td>
+                    <td>${currencySymbol} ${effectiveCPM.toFixed(2)}</td>
+                    <td class="highlight">${formatNumberFull(viewsNeeded)}</td>
+                    <td><span class="tag ${difficulty.class}">${difficulty.label}</span></td>
+                `;
+                summaryBody.appendChild(row);
+            });
+        }
+
+        // Event listeners
+        document.getElementById('cost').addEventListener('input', calculate);
+        document.getElementById('currency').addEventListener('change', calculate);
+        document.getElementById('niche').addEventListener('change', calculate);
+
+        // Initial calculation
+        calculate();
+    </script>
+</body>
+</html>
