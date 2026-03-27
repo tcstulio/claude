@@ -92,6 +92,35 @@
         .event-item:last-child { border-bottom: none; }
         .event-time { color: var(--muted); font-size: 0.8em; }
 
+        /* Economy Section */
+        .economy-section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 16px 0; }
+        .economy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 10px; }
+        .eco-card { background: var(--bg); border-radius: 8px; padding: 10px; text-align: center; }
+        .eco-value { font-size: 1.4em; font-weight: bold; color: var(--accent); }
+        .eco-label { font-size: 0.7em; color: var(--muted); margin-top: 2px; }
+        .eco-sub { font-size: 0.65em; color: var(--muted); }
+        .resource-bar-container { margin-top: 10px; }
+        .resource-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+        .resource-label { font-size: 0.8em; width: 50px; color: var(--muted); }
+        .resource-bar { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; position: relative; }
+        .resource-bar-fill { height: 100%; border-radius: 3px; transition: width 1s ease; }
+        .resource-bar-peak { position: absolute; top: 0; height: 100%; width: 2px; background: var(--red); opacity: 0.7; }
+        .resource-pct { font-size: 0.75em; width: 45px; text-align: right; }
+        .eco-impact { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+        .eco-impact-tag { font-size: 0.7em; padding: 3px 8px; border-radius: 12px; background: var(--bg); border: 1px solid var(--border); }
+        .eco-impact-tag.positive { border-color: var(--green); color: var(--green); }
+        .eco-impact-tag.negative { border-color: var(--red); color: var(--red); }
+        .eco-impact-tag.neutral { border-color: var(--yellow); color: var(--yellow); }
+
+        /* Terminal Section */
+        .terminal-section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 16px 0; }
+        .terminal-panes { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+        .terminal-pane { background: var(--bg); border-radius: 8px; padding: 8px 12px; font-family: monospace; font-size: 0.8em; border: 1px solid var(--border); }
+        .terminal-pane.active { border-color: var(--green); }
+        .terminal-pane .pane-cmd { color: var(--green); font-weight: bold; }
+        .terminal-pane .pane-session { color: var(--muted); font-size: 0.8em; }
+        .terminal-unavailable { color: var(--muted); font-size: 0.85em; font-style: italic; margin-top: 8px; }
+
         /* Sensors Debug */
         .sensors-debug { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 16px 0; font-size: 0.8em; font-family: monospace; }
         .sensors-debug summary { cursor: pointer; color: var(--muted); }
@@ -177,6 +206,18 @@
             <div class="section-title" style="margin:0 0 8px">Historico</div>
             <canvas id="historyCanvas" height="180"></canvas>
             <div class="chart-legend" id="chartLegend"></div>
+        </div>
+
+        <div class="economy-section" id="economySection" style="display:none">
+            <div class="section-title" style="margin:0 0 4px">Economia da Tulipa</div>
+            <div class="economy-grid" id="economyGrid"></div>
+            <div class="resource-bar-container" id="resourceBars"></div>
+            <div class="eco-impact" id="ecoImpact"></div>
+        </div>
+
+        <div class="terminal-section" id="terminalSection" style="display:none">
+            <div class="section-title" style="margin:0 0 4px">Terminal</div>
+            <div id="terminalContent"></div>
         </div>
 
         <div class="events">
@@ -501,12 +542,133 @@
             needKeys.map(k => `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:${NEED_COLORS[k]}"></div>${k}</div>`).join('');
     }
 
-    // Sensors
+    // Sensors + Economy + Terminal
+    let lastSensors = null;
     async function fetchSensors() {
         try {
             const res = await fetch('/api/sensors');
-            document.getElementById('sensorsData').textContent = JSON.stringify(await res.json(), null, 2);
+            lastSensors = await res.json();
+            document.getElementById('sensorsData').textContent = JSON.stringify(lastSensors, null, 2);
+            renderEconomy(lastSensors);
+            renderTerminal(lastSensors);
         } catch {}
+    }
+
+    function renderEconomy(s) {
+        const section = document.getElementById('economySection');
+        // Show if we have economy data
+        if (s.mcpCalls === undefined && s.cpuUsage === undefined) {
+            section.style.display = 'none';
+            return;
+        }
+        section.style.display = 'block';
+
+        // Counter cards
+        const grid = document.getElementById('economyGrid');
+        const cards = [];
+        if (s.mcpCalls !== undefined) {
+            const errPct = s.mcpCalls > 0 ? ((s.mcpErrors || 0) / s.mcpCalls * 100).toFixed(1) : '0';
+            cards.push({ value: s.mcpCalls, label: 'Chamadas MCP', sub: `${s.mcpErrors || 0} erros (${errPct}%)` });
+        }
+        if (s.messagesRouted !== undefined) {
+            cards.push({ value: s.messagesRouted, label: 'Mensagens', sub: `${s.messagesFailed || 0} falhas` });
+        }
+        if (s.httpRequests !== undefined) {
+            cards.push({ value: s.httpRequests, label: 'HTTP Requests', sub: '' });
+        }
+        if (s.tasksCompleted !== undefined) {
+            cards.push({ value: s.tasksCompleted, label: 'Tasks', sub: `${s.tasksFailed || 0} falhas` });
+        }
+        if (s.uptimeHours !== undefined) {
+            cards.push({ value: s.uptimeHours + 'h', label: 'Uptime', sub: '' });
+        }
+        grid.innerHTML = cards.map(c =>
+            `<div class="eco-card"><div class="eco-value">${c.value}</div><div class="eco-label">${c.label}</div>${c.sub ? `<div class="eco-sub">${c.sub}</div>` : ''}</div>`
+        ).join('');
+
+        // Resource bars
+        const bars = document.getElementById('resourceBars');
+        const resources = [];
+        if (s.cpuUsage !== undefined) {
+            resources.push({ label: 'CPU', value: s.cpuUsage, peak: s.peakCpuPercent, color: s.cpuUsage > 80 ? '#f44336' : s.cpuUsage > 50 ? '#ffeb3b' : '#4caf50' });
+        }
+        if (s.memoryUsage !== undefined) {
+            resources.push({ label: 'RAM', value: s.memoryUsage, color: s.memoryUsage > 80 ? '#f44336' : s.memoryUsage > 60 ? '#ffeb3b' : '#4caf50' });
+        }
+        if (s.gpuUsage !== undefined) {
+            resources.push({ label: 'GPU', value: s.gpuUsage, peak: s.peakGpuPercent, color: s.gpuUsage > 90 ? '#f44336' : s.gpuUsage > 60 ? '#ffeb3b' : '#42a5f5' });
+        }
+        if (s.processRss !== undefined) {
+            const mb = Math.round(s.processRss / (1024 * 1024));
+            const pct = Math.min(100, Math.round(mb / 5)); // scale: 500MB = 100%
+            resources.push({ label: 'Heap', value: pct, color: '#ab47bc', display: mb + 'MB' });
+        }
+        bars.innerHTML = resources.map(r => {
+            const peakHtml = r.peak ? `<div class="resource-bar-peak" style="left:${Math.min(100,r.peak)}%"></div>` : '';
+            return `<div class="resource-row">
+                <span class="resource-label">${r.label}</span>
+                <div class="resource-bar"><div class="resource-bar-fill" style="width:${r.value}%;background:${r.color}"></div>${peakHtml}</div>
+                <span class="resource-pct">${r.display || Math.round(r.value) + '%'}</span>
+            </div>`;
+        }).join('');
+
+        // Impact tags (what economy is doing to the pet)
+        const impact = document.getElementById('ecoImpact');
+        const tags = [];
+        if (s.mcpErrors && s.mcpCalls && (s.mcpErrors / s.mcpCalls) > 0.1) {
+            tags.push({ text: 'Erros MCP afetam saude', cls: 'negative' });
+        } else if (s.mcpCalls > 100 && (!s.mcpErrors || (s.mcpErrors / s.mcpCalls) < 0.01)) {
+            tags.push({ text: 'MCP estavel', cls: 'positive' });
+        }
+        if (s.messagesRouted > 0) tags.push({ text: `${s.messagesRouted} msgs = social +`, cls: 'positive' });
+        if (s.peakCpuPercent > 80) tags.push({ text: `Pico CPU ${Math.round(s.peakCpuPercent)}% = estresse`, cls: 'negative' });
+        if (s.processHeapUsed && s.processHeapUsed > 200 * 1024 * 1024) tags.push({ text: 'Memoria alta = limpeza -', cls: 'negative' });
+        if (s.httpRequests > 5000) tags.push({ text: 'Muitos requests = energia -', cls: 'neutral' });
+        if (s.cpuUsage !== undefined && s.cpuUsage < 30 && s.memoryUsage !== undefined && s.memoryUsage < 60) {
+            tags.push({ text: 'Economico', cls: 'positive' });
+        }
+        impact.innerHTML = tags.map(t => `<span class="eco-impact-tag ${t.cls}">${t.text}</span>`).join('');
+    }
+
+    function renderTerminal(s) {
+        const section = document.getElementById('terminalSection');
+        const content = document.getElementById('terminalContent');
+
+        if (s.terminalAvailable === false || (s.terminalPanes === undefined && s.terminalCommands === undefined)) {
+            section.style.display = 'none';
+            return;
+        }
+        section.style.display = 'block';
+
+        if (!s.terminalCommands || s.terminalCommands.length === 0) {
+            content.innerHTML = '<div class="terminal-unavailable">Nenhum painel tmux ativo</div>';
+            return;
+        }
+
+        const moodText = s.terminalMoodBoost > 0
+            ? `<span style="color:var(--green)">humor +${s.terminalMoodBoost}</span>`
+            : s.terminalMoodBoost < 0
+            ? `<span style="color:var(--red)">humor ${s.terminalMoodBoost}</span>`
+            : '';
+        const drainText = s.terminalEnergyDrain > 0
+            ? `<span style="color:var(--orange)">energia -${s.terminalEnergyDrain}</span>`
+            : '';
+        const summary = [
+            `${s.terminalPanes} painel(is)`,
+            `${s.terminalActivePanes || 0} ativo(s)`,
+            moodText, drainText
+        ].filter(Boolean).join(' · ');
+
+        content.innerHTML = `
+            <div style="font-size:0.8em;color:var(--muted);margin-bottom:8px">${summary}</div>
+            <div class="terminal-panes">
+                ${s.terminalCommands.map((cmd, i) =>
+                    `<div class="terminal-pane${i === 0 ? ' active' : ''}">
+                        <span class="pane-cmd">$ ${cmd}</span>
+                    </div>`
+                ).join('')}
+            </div>
+        `;
     }
 
     // Toast

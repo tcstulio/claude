@@ -400,6 +400,84 @@ const ACHIEVEMENT_DEFS: AchievementDef[] = [
              petState.getEvolutionStage().name === 'Floresta';
     },
   },
+
+  // ── Economia ────────────────────────────────────────────────
+  {
+    id: 'economista',
+    name: 'Economista',
+    description: 'CPU média < 30% e memória < 60% por 24h',
+    icon: '💰',
+    category: 'Economia',
+    target: 1440,
+    progressive: true,
+    condition: ({ sensors, tracker }) => {
+      const cpuOk = (sensors.cpuUsage ?? 0) < 30;
+      const memOk = (sensors.memoryUsage ?? 0) < 60;
+      const streak = tracker._streaks.economista || 0;
+      return (cpuOk && memOk) ? streak + 1 : 0;
+    },
+    streakKey: 'economista',
+  },
+  {
+    id: 'workaholic',
+    name: 'Workaholic',
+    description: 'Processou 1000+ chamadas MCP em um dia',
+    icon: '⚙️',
+    category: 'Economia',
+    target: 1000,
+    progressive: true,
+    condition: ({ sensors }) => {
+      return sensors.mcpCalls || 0;
+    },
+  },
+  {
+    id: 'mensageiro',
+    name: 'Mensageiro',
+    description: 'Roteou 500+ mensagens',
+    icon: '📨',
+    category: 'Economia',
+    target: 500,
+    progressive: true,
+    condition: ({ sensors }) => {
+      return sensors.messagesRouted || 0;
+    },
+  },
+  {
+    id: 'resiliente',
+    name: 'Resiliente',
+    description: 'Taxa de erro MCP abaixo de 1% com 100+ chamadas',
+    icon: '🛡️',
+    category: 'Economia',
+    target: 1,
+    condition: ({ sensors }) => {
+      if (!sensors.mcpCalls || sensors.mcpCalls < 100) return false;
+      const errorRate = (sensors.mcpErrors || 0) / sensors.mcpCalls;
+      return errorRate < 0.01;
+    },
+  },
+  {
+    id: 'leve_como_pluma',
+    name: 'Leve como Pluma',
+    description: 'Processo usando menos de 50MB de RAM',
+    icon: '🪶',
+    category: 'Economia',
+    target: 1,
+    condition: ({ sensors }) => {
+      if (!sensors.processRss) return false;
+      return sensors.processRss < 50 * 1024 * 1024;
+    },
+  },
+  {
+    id: 'terminal_master',
+    name: 'Terminal Master',
+    description: '5+ painéis tmux ativos ao mesmo tempo',
+    icon: '🖥️',
+    category: 'Especiais',
+    target: 1,
+    condition: ({ sensors }) => {
+      return (sensors.terminalPanes ?? 0) >= 5;
+    },
+  },
 ];
 
 export class AchievementTracker {

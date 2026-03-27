@@ -54,12 +54,25 @@ function authHeaders(req) {
   return h;
 }
 
-// Extrai token do header Authorization do request
-function getRequestToken(req) {
-  const auth = req?.get?.('authorization') || '';
-  if (auth.startsWith('Bearer ')) return auth.slice(7);
-  return '';
-}
+app.use(express.json());
+app.use(express.static('public'));
+
+// ─── Rate Limiting ────────────────────────────────────────────────────
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 min
+const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '60', 10); // 60 req/min
+const rateLimitMap = new Map();
+
+function rateLimit(req, res, next) {
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const now = Date.now();
+  let entry = rateLimitMap.get(ip);
+
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW) {
+    entry = { count: 0, windowStart: now };
+    rateLimitMap.set(ip, entry);
+  }
+
+  entry.count++;
 
 // Middleware de autenticação — requer Bearer token válido no request
 // Aceita: master token, peer tokens do registry, ou tokens federados via hub
@@ -92,6 +105,24 @@ const MCP_RETRY_DELAYS = [2000, 4000, 8000]; // backoff exponencial
 async function callMcpTool(tool, args = {}, req = null) {
   let lastError;
 
+  const auth = req.get('authorization') || '';
+  const queryToken = req.query.token;
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : queryToken;
+
+  if (token === DASHBOARD_TOKEN) return next();
+
+  res.status(401).json({ error: 'Token inválido ou ausente', hint: 'Envie Authorization: Bearer <token>' });
+}
+
+// Rotas públicas (sem auth): health, monitor, services GET, dashboard HTML
+// Rotas protegidas: tudo que modifica estado (send, deploy, mcp, etc)
+
+// ─── Helper: chama MCP tool no gateway (com retry para 502/503) ──────
+let _mcpCallId = 0;
+const MCP_MAX_RETRIES = 3;
+const MCP_RETRY_DELAYS = [2000, 4000, 8000]; // backoff exponencial
+
+async function callMcpTool(tool, args = {}, req = null) {
   for (let attempt = 0; attempt <= MCP_MAX_RETRIES; attempt++) {
     try {
       const res = await proxyFetch(`${GATEWAY_URL}/mcp`, {
@@ -124,23 +155,38 @@ async function callMcpTool(tool, args = {}, req = null) {
         if (json.error) {
           throw new Error(`MCP error ${json.error.code}: ${json.error.message}`);
         }
+        metrics.trackMcpCall(true);
         return json.result;
       }
 
+      metrics.trackMcpCall(true);
       return json;
 
     } catch (err) {
-      lastError = err;
-      const retryable = err.statusCode === 502 || err.statusCode === 503 || err.code === 'UND_ERR_CONNECT_TIMEOUT' || err.name === 'TimeoutError';
-
+      // Retry em 502/503 (gateway temporariamente fora)
+      const retryable = err.statusCode === 502 || err.statusCode === 503;
       if (retryable && attempt < MCP_MAX_RETRIES) {
         const delay = MCP_RETRY_DELAYS[attempt] || 8000;
-        console.log(`[mcp] ${tool} falhou (${err.message}), retry ${attempt + 1}/${MCP_MAX_RETRIES} em ${delay}ms`);
+        console.log(`[mcp] Retry ${attempt + 1}/${MCP_MAX_RETRIES} para ${tool} em ${delay}ms`);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
+      metrics.trackMcpCall(false);
       throw err;
     }
+  }
+}
+
+// ─── Inicializa Storage (SQLite) ──────────────────────────────────────
+// Storage tenta better-sqlite3 (sync) primeiro; se não tiver, cai para sql.js (async)
+let storage;
+try {
+  storage = new Storage();
+  if (storage._adapter) {
+    console.log(`[storage] Usando ${storage._engine} — pronto`);
+  } else {
+    console.log('[storage] Construtor ok mas adapter null — fallback async');
+    storage = null;
   }
   throw lastError;
 }
@@ -1776,6 +1822,230 @@ app.post('/api/deploy/remote', requireAuth, async (req, res) => {
   }
 });
 
+// ─── Task Engine endpoints ──────────────────────────────────────────
+
+app.get('/api/tasks', requireAuth, (_req, res) => {
+  const { status } = _req.query;
+  if (status) {
+    res.json({ tasks: storage.getTasksByStatus(status) });
+  } else {
+    res.json({ stats: storage.getTaskStats(), tasks: taskEngine.toJSON() });
+  }
+});
+
+app.post('/api/tasks', requireAuth, (req, res) => {
+  const { description, type, input, priority, assignedTo } = req.body;
+  if (!description) return res.status(400).json({ error: 'Campo "description" é obrigatório' });
+  const task = taskEngine.submit(description, { type, input, priority, assignedTo });
+  res.json({ ok: true, task });
+});
+
+app.post('/api/tasks/:id/decompose', requireAuth, (req, res) => {
+  const { subtasks } = req.body;
+  if (!subtasks || !Array.isArray(subtasks)) {
+    return res.status(400).json({ error: 'Campo "subtasks" (array) é obrigatório' });
+  }
+  const created = taskEngine.decompose(req.params.id, subtasks);
+  res.json({ ok: true, created: created.length, subtasks: created });
+});
+
+app.post('/api/tasks/:id/delegate', requireAuth, async (req, res) => {
+  try {
+    const { nodeId } = req.body;
+    const target = nodeId || taskEngine.autoAssign(req.params.id);
+    if (!target) return res.status(400).json({ error: 'Nenhum peer disponível para delegação' });
+    const result = await taskEngine.delegate(req.params.id, target);
+    res.json({ ok: true, nodeId: target, result });
+  } catch (err) {
+    res.status(502).json({ error: 'Delegação falhou', detail: err.message });
+  }
+});
+
+app.get('/api/tasks/:id', requireAuth, (req, res) => {
+  const task = storage.getTask(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task não encontrada' });
+  const subtasks = storage.getSubtasks(req.params.id);
+  res.json({ task, subtasks });
+});
+
+// ─── Identity endpoints ────────────────────────────────────────────
+
+app.get('/api/identity', (_req, res) => {
+  res.json(identity.exportPublicKey());
+});
+
+app.post('/api/identity/sign', requireAuth, (req, res) => {
+  const { data } = req.body;
+  if (!data) return res.status(400).json({ error: 'Campo "data" é obrigatório' });
+  const signature = identity.sign(data);
+  res.json({ signature, signerKey: identity.publicKey, fingerprint: identity.fingerprint });
+});
+
+app.post('/api/identity/verify', (req, res) => {
+  const { data, signature, publicKey } = req.body;
+  if (!data || !signature || !publicKey) {
+    return res.status(400).json({ error: 'Campos "data", "signature" e "publicKey" são obrigatórios' });
+  }
+  const valid = Identity.verify(data, signature, publicKey);
+  res.json({ valid });
+});
+
+// ─── Metrics endpoints ──────────────────────────────────────────────
+
+// Snapshot atual (coleta em tempo real)
+app.get('/api/metrics', async (_req, res) => {
+  try {
+    const snapshot = await metrics.collect();
+    res.json(snapshot);
+  } catch (err) {
+    res.status(500).json({ error: 'Falha ao coletar métricas', detail: err.message });
+  }
+});
+
+// Resumo com médias, picos e contadores
+app.get('/api/metrics/summary', (_req, res) => {
+  const summary = metrics.summary();
+  if (!summary) return res.json({ message: 'Ainda sem dados coletados', counters: metrics._tokens });
+  res.json(summary);
+});
+
+// Histórico de snapshots
+app.get('/api/metrics/history', (req, res) => {
+  const limit = req.query.limit ? parseInt(req.query.limit, 10) : 60;
+  res.json({ history: metrics.history(limit), total: metrics._history.length });
+});
+
+// Linha compacta para log/dashboard
+app.get('/api/metrics/compact', (_req, res) => {
+  res.json({ status: metrics.compact() });
+});
+
+// Métricas no formato SensorReadings (para o tulipa-pet consumir)
+app.get('/api/metrics/sensors', async (_req, res) => {
+  try {
+    const snapshot = await metrics.collect();
+    const counters = metrics._tokens;
+
+    const sensors = {
+      // Hardware
+      cpuUsage: Math.round(snapshot.cpu.system),
+      memoryUsage: Math.round(snapshot.memory.system.usedPercent),
+      loadAverage: snapshot.cpu.loadAvg[0],
+      uptimeHours: Math.round(snapshot.uptime.process / 3600),
+      hourOfDay: new Date().getHours(),
+
+      // GPU (se disponível)
+      gpuUsage: snapshot.gpu[0]?.utilization ?? undefined,
+      gpuTemperature: snapshot.gpu[0]?.temperature ?? undefined,
+      gpuMemoryUsage: snapshot.gpu[0]?.memory?.usedPercent ?? undefined,
+      temperature: snapshot.gpu[0]?.temperature ?? undefined,
+
+      // Simulação de bateria para servidor (CPU livre)
+      battery: Math.round((100 - snapshot.cpu.system) * 0.7 + 30),
+
+      // Contadores de economia (novos sensores)
+      mcpCalls: counters.mcpCalls,
+      mcpErrors: counters.mcpErrors,
+      messagesRouted: counters.messagesRouted,
+      messagesFailed: counters.messagesFailed,
+      httpRequests: counters.httpRequests,
+      tasksCompleted: counters.tasksCompleted,
+      tasksFailed: counters.tasksFailed,
+
+      // Picos (watermarks)
+      peakCpuPercent: snapshot.peaks.cpuPercent,
+      peakMemoryRss: snapshot.peaks.memoryRss,
+      peakGpuPercent: snapshot.peaks.gpuPercent,
+
+      // Processo Node.js
+      processRss: snapshot.memory.process.rss,
+      processHeapUsed: snapshot.memory.process.heapUsed,
+    };
+
+    // Remove undefined values
+    const clean = Object.fromEntries(
+      Object.entries(sensors).filter(([_, v]) => v !== undefined)
+    );
+
+    res.json(clean);
+  } catch (err) {
+    res.status(500).json({ error: 'Falha ao coletar sensores', detail: err.message });
+  }
+});
+
+// ─── Terminal (tmux) endpoints ──────────────────────────────────────
+
+// Snapshot completo de todos os painéis tmux
+app.get('/api/terminal/snapshot', async (req, res) => {
+  try {
+    const scrollback = req.query.scrollback ? parseInt(req.query.scrollback, 10) : 0;
+    const captureContent = req.query.content !== 'false';
+    const snap = await terminal.snapshot({ captureContent, scrollback });
+    res.json(snap);
+  } catch (err) {
+    res.status(500).json({ error: 'Falha ao capturar terminal', detail: err.message });
+  }
+});
+
+// Listar sessões tmux
+app.get('/api/terminal/sessions', async (_req, res) => {
+  const sessions = await terminal.listSessions();
+  res.json({ available: await terminal.isAvailable(), sessions });
+});
+
+// Listar painéis com comando atual (pane_current_command)
+app.get('/api/terminal/panes', async (_req, res) => {
+  const panes = await terminal.listPanes();
+  res.json({ available: await terminal.isAvailable(), panes });
+});
+
+// Capturar conteúdo de um painel específico
+app.get('/api/terminal/capture/:paneId', async (req, res) => {
+  try {
+    const scrollback = req.query.scrollback ? parseInt(req.query.scrollback, 10) : 0;
+    const result = await terminal.capturePane(req.params.paneId, { scrollback });
+    res.json(result || { error: 'tmux não disponível' });
+  } catch (err) {
+    res.status(500).json({ error: 'Falha ao capturar painel', detail: err.message });
+  }
+});
+
+// Comando atual de um painel
+app.get('/api/terminal/command/:paneId', async (req, res) => {
+  const result = await terminal.getCurrentCommand(req.params.paneId);
+  res.json(result || { error: 'tmux não disponível' });
+});
+
+// Histórico de snapshots (só sumários)
+app.get('/api/terminal/history', (req, res) => {
+  const limit = req.query.limit ? parseInt(req.query.limit, 10) : 50;
+  res.json({ history: terminal.history(limit) });
+});
+
+// ─── Storage / Search endpoints ──────────────────────────────────────
+
+app.get('/api/storage/stats', (_req, res) => {
+  res.json(storage.stats);
+});
+
+app.get('/api/messages/search', requireAuth, (req, res) => {
+  const { q, limit } = req.query;
+  if (!q) return res.status(400).json({ error: 'Query param "q" é obrigatório' });
+  const results = storage.searchMessages(q, limit ? parseInt(limit, 10) : 50);
+  res.json({ results, count: results.length });
+});
+
+// ─── Audit Log endpoint ────────────────────────────────────────────
+
+app.get('/api/audit', requireAuth, (req, res) => {
+  const { event, source, since, limit } = req.query;
+  const logs = storage.getAuditLog({
+    event, source, since,
+    limit: limit ? parseInt(limit, 10) : 100,
+  });
+  res.json({ logs, count: logs.length });
+});
+
 // ─── Startup ───────────────────────────────────────────────────────────
 
 let monitorTimer = null;
@@ -1865,6 +2135,44 @@ app.listen(PORT, () => {
   console.log('  POST /api/deploy/trigger      — deploy manual');
   console.log('  POST /api/deploy/remote       — deploy remoto via run_command');
   console.log('  GET  /api/deploy/log          — log de deploys');
+
+  // Task Engine
+  console.log('\n  Tasks:');
+  console.log('  GET  /api/tasks               — listar tarefas');
+  console.log('  POST /api/tasks               — criar tarefa');
+  console.log('  GET  /api/tasks/:id           — detalhe da tarefa');
+  console.log('  POST /api/tasks/:id/decompose — decompor em subtarefas');
+  console.log('  POST /api/tasks/:id/delegate  — delegar para peer');
+
+  // Identity
+  console.log('\n  Identity:');
+  console.log('  GET  /api/identity            — chave pública + fingerprint');
+  console.log('  POST /api/identity/sign       — assinar dados');
+  console.log('  POST /api/identity/verify     — verificar assinatura');
+  console.log(`  Fingerprint: ${identity.fingerprint}`);
+
+  // Metrics
+  console.log('\n  Metrics:');
+  console.log('  GET  /api/metrics             — snapshot de recursos (CPU, mem, GPU)');
+  console.log('  GET  /api/metrics/summary     — resumo com médias e picos');
+  console.log('  GET  /api/metrics/history     — histórico de snapshots');
+  console.log('  GET  /api/metrics/compact     — linha compacta para dashboard');
+  console.log('  GET  /api/metrics/sensors     — formato SensorReadings (pet)');
+
+  // Terminal (tmux)
+  console.log('\n  Terminal:');
+  console.log('  GET  /api/terminal/snapshot   — snapshot completo dos painéis tmux');
+  console.log('  GET  /api/terminal/sessions   — listar sessões tmux');
+  console.log('  GET  /api/terminal/panes      — painéis com pane_current_command');
+  console.log('  GET  /api/terminal/capture/:id — capturar conteúdo de um painel');
+  console.log('  GET  /api/terminal/command/:id — comando atual de um painel');
+  console.log('  GET  /api/terminal/history    — histórico de snapshots');
+
+  // Storage
+  console.log('\n  Storage:');
+  console.log('  GET  /api/storage/stats       — estatísticas do banco');
+  console.log('  GET  /api/messages/search     — buscar mensagens');
+  console.log('  GET  /api/audit               — log de auditoria');
 
   // Registra este nó no service registry
   registerSelf();
