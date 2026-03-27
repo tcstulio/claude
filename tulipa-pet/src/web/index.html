@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tulipa Pet</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #0d1117; --card: #161b22; --border: #30363d;
+            --text: #e6edf3; --muted: #8b949e; --accent: #e91e63;
+            --green: #4caf50; --yellow: #ffeb3b; --red: #f44336;
+            --blue: #42a5f5; --purple: #ab47bc; --orange: #ff9800;
+        }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+        .container { max-width: 900px; margin: 0 auto; padding: 16px; }
+        header { text-align: center; padding: 16px 0; }
+        header h1 { font-size: 1.4em; color: var(--accent); }
+        header .subtitle { color: var(--muted); font-size: 0.85em; margin-top: 4px; }
+        .section-title { color: var(--muted); font-size: 0.9em; margin: 20px 0 10px; }
+
+        /* Pet Avatar */
+        .pet-avatar { text-align: center; margin: 16px 0; position: relative; }
+        .pet-face { width: 220px; height: 220px; margin: 0 auto; position: relative; }
+        .pet-face canvas { width: 220px; height: 220px; border-radius: 50%; border: 3px solid var(--accent); background: var(--card); }
+        .pet-stage { font-size: 3em; margin-bottom: 6px; }
+        .pet-name { font-size: 1.5em; font-weight: bold; cursor: pointer; }
+        .pet-name:hover { color: var(--accent); }
+        .pet-info { color: var(--muted); font-size: 0.85em; margin-top: 4px; }
+        .pet-mood { font-size: 1.2em; margin-top: 8px; padding: 4px 16px; border-radius: 20px; display: inline-block; }
+        /* Floating particles */
+        .particles { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 260px; height: 260px; pointer-events: none; }
+
+        /* Score Ring */
+        .score-ring { width: 110px; height: 110px; margin: 12px auto; position: relative; }
+        .score-ring svg { width: 100%; height: 100%; }
+        .score-ring .score-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 1.6em; font-weight: bold; }
+
+        /* Needs Grid */
+        .needs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; margin: 16px 0; }
+        .need-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; transition: transform 0.2s; }
+        .need-card:hover { transform: translateY(-2px); }
+        .need-card.critical { border-color: var(--red); animation: pulse 2s infinite; }
+        .need-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .need-label { font-size: 0.9em; }
+        .need-value { font-weight: bold; font-size: 1.1em; }
+        .need-bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+        .need-bar-fill { height: 100%; border-radius: 4px; transition: width 1s ease, background 0.5s; }
+
+        /* Actions */
+        .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 16px 0; }
+        .action-btn { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 10px 18px; border-radius: 10px; cursor: pointer; font-size: 0.9em; transition: all 0.2s; }
+        .action-btn:hover { border-color: var(--accent); background: #1a1a2e; transform: scale(1.05); }
+        .action-btn:active { transform: scale(0.95); }
+        .action-btn .action-icon { font-size: 1.3em; display: block; margin-bottom: 2px; }
+
+        /* Achievements */
+        .achievements-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+        .achievement { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; text-align: center; transition: transform 0.2s; position: relative; }
+        .achievement:hover { transform: translateY(-2px); }
+        .achievement.locked { opacity: 0.4; filter: grayscale(1); }
+        .achievement.unlocked { border-color: var(--accent); }
+        .achievement.unlocked::after { content: ''; position: absolute; top: -1px; left: -1px; right: -1px; bottom: -1px; border-radius: 10px; border: 1px solid var(--accent); box-shadow: 0 0 8px rgba(233,30,99,0.2); pointer-events: none; }
+        .ach-icon { font-size: 1.8em; }
+        .ach-name { font-size: 0.75em; margin-top: 4px; font-weight: 600; }
+        .ach-desc { font-size: 0.65em; color: var(--muted); margin-top: 2px; }
+        .ach-progress { height: 3px; background: var(--border); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+        .ach-progress-fill { height: 100%; background: var(--accent); border-radius: 2px; }
+        .ach-date { font-size: 0.6em; color: var(--accent); margin-top: 4px; }
+
+        /* Network Peers */
+        .network-pets { display: flex; gap: 10px; overflow-x: auto; padding: 8px 0; }
+        .peer-pet { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; min-width: 160px; text-align: center; flex-shrink: 0; }
+        .peer-sprite { font-size: 2em; }
+        .peer-name { font-size: 0.85em; margin-top: 4px; font-weight: 600; }
+        .peer-mood { font-size: 0.75em; color: var(--muted); }
+        .peer-hearts { color: var(--accent); font-size: 0.7em; margin-top: 4px; }
+        .peer-gift { margin-top: 6px; }
+        .peer-gift select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font-size: 0.7em; }
+        .peer-gift button { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 3px 8px; font-size: 0.7em; cursor: pointer; margin-left: 4px; }
+
+        /* History Chart */
+        .history-chart { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 16px 0; }
+        .history-chart canvas { width: 100%; height: 180px; }
+        .chart-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 0.7em; }
+        .chart-legend-item { display: flex; align-items: center; gap: 4px; }
+        .chart-legend-dot { width: 10px; height: 3px; border-radius: 2px; }
+
+        /* Events */
+        .events { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 16px 0; max-height: 200px; overflow-y: auto; }
+        .event-item { padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 0.83em; }
+        .event-item:last-child { border-bottom: none; }
+        .event-time { color: var(--muted); font-size: 0.8em; }
+
+        /* Sensors Debug */
+        .sensors-debug { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin: 16px 0; font-size: 0.8em; font-family: monospace; }
+        .sensors-debug summary { cursor: pointer; color: var(--muted); }
+
+        /* Status dot */
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+        .status-dot.online { background: var(--green); box-shadow: 0 0 6px rgba(76,175,80,0.5); }
+        .status-dot.offline { background: var(--red); }
+
+        /* Toast */
+        .toast { position: fixed; bottom: 20px; right: 20px; background: var(--card); border: 1px solid var(--accent); border-radius: 12px; padding: 14px 20px; color: var(--text); font-size: 0.9em; transform: translateY(100px); opacity: 0; transition: all 0.3s; z-index: 100; max-width: 320px; }
+        .toast.show { transform: translateY(0); opacity: 1; }
+
+        /* Sound toggle */
+        .sound-toggle { position: fixed; top: 10px; right: 10px; background: var(--card); border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 0.8em; z-index: 50; }
+
+        @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(244,67,54,0.3); } 50% { box-shadow: 0 0 15px 5px rgba(244,67,54,0.15); } }
+        @keyframes floatUp { 0% { transform: translateY(0) scale(1); opacity: 1; } 100% { transform: translateY(-80px) scale(0.5); opacity: 0; } }
+        @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+        .shake { animation: shake 0.3s ease 3; }
+
+        @media (max-width: 600px) {
+            .container { padding: 10px; }
+            .needs-grid { grid-template-columns: 1fr; }
+            .achievements-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+            .pet-face { width: 180px; height: 180px; }
+            .pet-face canvas { width: 180px; height: 180px; }
+        }
+    </style>
+</head>
+<body>
+    <button class="sound-toggle" id="soundToggle" onclick="toggleSound()">Som: OFF</button>
+    <div class="container">
+        <header>
+            <h1>Tulipa Pet</h1>
+            <div class="subtitle">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Conectando...</span>
+            </div>
+        </header>
+
+        <div class="pet-avatar" id="petAvatar">
+            <div class="pet-stage" id="petStage">?</div>
+            <div class="pet-face">
+                <canvas id="petCanvas" width="220" height="220"></canvas>
+                <div class="particles" id="particles"></div>
+            </div>
+            <div class="pet-name" id="petName" title="Clique para renomear">Tulipa</div>
+            <div class="pet-info" id="petInfo">...</div>
+            <div class="pet-mood" id="petMood">...</div>
+        </div>
+
+        <div class="score-ring">
+            <svg viewBox="0 0 120 120">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#30363d" stroke-width="8"/>
+                <circle id="scoreCircle" cx="60" cy="60" r="52" fill="none" stroke="#e91e63" stroke-width="8" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" transform="rotate(-90 60 60)"/>
+            </svg>
+            <div class="score-text" id="scoreText">--</div>
+        </div>
+
+        <div class="needs-grid" id="needsGrid"></div>
+
+        <div class="actions" id="actionsBar">
+            <button class="action-btn" onclick="interact('pet')"><span class="action-icon">&#x1F495;</span> Carinho</button>
+            <button class="action-btn" onclick="interact('feed')"><span class="action-icon">&#x26A1;</span> Alimentar</button>
+            <button class="action-btn" onclick="interact('clean')"><span class="action-icon">&#x1F9F9;</span> Limpar</button>
+            <button class="action-btn" onclick="interact('heal')"><span class="action-icon">&#x2764;&#xFE0F;</span> Curar</button>
+            <button class="action-btn" onclick="interact('guard')"><span class="action-icon">&#x1F6E1;&#xFE0F;</span> Proteger</button>
+            <button class="action-btn" onclick="interact('play')"><span class="action-icon">&#x1F3AD;</span> Brincar</button>
+        </div>
+
+        <div id="networkSection" style="display:none">
+            <div class="section-title">Pets na Rede</div>
+            <div class="network-pets" id="networkPets"></div>
+        </div>
+
+        <div id="achievementsSection">
+            <div class="section-title">Conquistas <span id="achCount"></span></div>
+            <div class="achievements-grid" id="achievementsGrid"></div>
+        </div>
+
+        <div class="history-chart">
+            <div class="section-title" style="margin:0 0 8px">Historico</div>
+            <canvas id="historyCanvas" height="180"></canvas>
+            <div class="chart-legend" id="chartLegend"></div>
+        </div>
+
+        <div class="events">
+            <div class="section-title" style="margin:0 0 8px">Eventos Recentes</div>
+            <div id="eventsLog"></div>
+        </div>
+
+        <details class="sensors-debug">
+            <summary>Dados dos Sensores (debug)</summary>
+            <pre id="sensorsData">Aguardando...</pre>
+        </details>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+    let ws, petState = null, mouseX = 0.5, mouseY = 0.5;
+    let blinkTimer = 0, isBlinking = false, nextBlink = 3000;
+    let soundEnabled = false, audioCtx = null;
+
+    // Sound
+    function toggleSound() {
+        soundEnabled = !soundEnabled;
+        document.getElementById('soundToggle').textContent = 'Som: ' + (soundEnabled ? 'ON' : 'OFF');
+        if (soundEnabled && !audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    function playTone(freq, dur, type='sine', vol=0.1) {
+        if (!soundEnabled || !audioCtx) return;
+        const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+        o.type = type; o.frequency.value = freq;
+        g.gain.setValueAtTime(vol, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start(); o.stop(audioCtx.currentTime + dur);
+    }
+    function playChime() { playTone(880, 0.15); setTimeout(() => playTone(1100, 0.2), 150); }
+    function playPurr() { playTone(120, 0.4, 'sawtooth', 0.05); }
+    function playAlert() { playTone(440, 0.1); setTimeout(() => playTone(330, 0.15), 120); }
+
+    // Mouse tracking
+    document.addEventListener('mousemove', e => {
+        mouseX = e.clientX / window.innerWidth;
+        mouseY = e.clientY / window.innerHeight;
+    });
+    document.addEventListener('touchmove', e => {
+        mouseX = e.touches[0].clientX / window.innerWidth;
+        mouseY = e.touches[0].clientY / window.innerHeight;
+    });
+
+    // Particles
+    function spawnParticle(emoji) {
+        const el = document.createElement('div');
+        el.textContent = emoji;
+        el.style.cssText = `position:absolute;font-size:1.4em;pointer-events:none;animation:floatUp 1.5s ease forwards;left:${40+Math.random()*60}%;top:60%;`;
+        document.getElementById('particles').appendChild(el);
+        setTimeout(() => el.remove(), 1500);
+    }
+
+    // WebSocket
+    function connect() {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${proto}//${location.host}/ws`);
+        ws.onopen = () => {
+            document.getElementById('statusDot').className = 'status-dot online';
+            document.getElementById('statusText').textContent = 'Conectado';
+        };
+        ws.onclose = () => {
+            document.getElementById('statusDot').className = 'status-dot offline';
+            document.getElementById('statusText').textContent = 'Reconectando...';
+            setTimeout(connect, 3000);
+        };
+        ws.onmessage = e => {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'state') { petState = msg.data; render(petState); }
+            else if (msg.type === 'interaction') { showToast(msg.data.message); }
+            else if (msg.type === 'achievement') { showToast('&#x1F3C6; ' + msg.data.name + '!'); playChime(); fetchAchievements(); }
+            else if (msg.type === 'peer-update') { fetchNetwork(); }
+        };
+    }
+
+    function interact(action) {
+        if (ws?.readyState !== 1) return;
+        ws.send(JSON.stringify({ action }));
+        const particles = { pet: ['\u{1F495}','\u{2764}\u{FE0F}','\u{1F49B}'], feed: ['\u{26A1}','\u{2728}'], clean: ['\u{2728}','\u{1F4A7}'], heal: ['\u{1F49A}','\u{2764}\u{FE0F}'], guard: ['\u{1F6E1}\u{FE0F}','\u{1F512}'], play: ['\u{1F3B5}','\u{2B50}','\u{1F389}'] };
+        (particles[action] || []).forEach((p, i) => setTimeout(() => spawnParticle(p), i * 200));
+        if (action === 'pet') playPurr();
+        else playChime();
+    }
+
+    // Render
+    function render(s) {
+        document.getElementById('petStage').textContent = s.stage.sprite;
+        document.getElementById('petName').textContent = s.name;
+        document.getElementById('petInfo').textContent = `Nivel ${s.level} | ${s.xp} XP | ${s.age.total} | ${s.agentType}`;
+
+        const moodEl = document.getElementById('petMood');
+        moodEl.textContent = `${s.mood.face} ${s.mood.name}`;
+        moodEl.style.background = s.mood.color + '22';
+        moodEl.style.color = s.mood.color;
+
+        // Score ring
+        const score = s.overallScore;
+        const offset = 326.7 - (score / 100) * 326.7;
+        const circle = document.getElementById('scoreCircle');
+        circle.style.strokeDashoffset = offset;
+        circle.style.stroke = score > 70 ? '#4caf50' : score > 40 ? '#ffeb3b' : '#f44336';
+        document.getElementById('scoreText').textContent = score;
+
+        // Critical shake
+        if (s.criticalNeeds?.length > 0) {
+            document.getElementById('petAvatar').classList.add('shake');
+            setTimeout(() => document.getElementById('petAvatar').classList.remove('shake'), 1000);
+        }
+
+        // Needs
+        const grid = document.getElementById('needsGrid');
+        grid.innerHTML = '';
+        for (const [key, need] of Object.entries(s.needs)) {
+            const crit = need.value < 30;
+            const color = need.value > 70 ? '#4caf50' : need.value > 40 ? '#ffeb3b' : '#f44336';
+            grid.innerHTML += `<div class="need-card ${crit?'critical':''}"><div class="need-header"><span class="need-label">${need.icon} ${need.label}</span><span class="need-value" style="color:${color}">${need.value}%</span></div><div class="need-bar"><div class="need-bar-fill" style="width:${need.value}%;background:${color}"></div></div></div>`;
+        }
+
+        // Events
+        document.getElementById('eventsLog').innerHTML = (s.events || []).map(e =>
+            `<div class="event-item"><span class="event-time">${new Date(e.time).toLocaleTimeString('pt-BR')}</span> ${e.message}</div>`
+        ).join('');
+
+        fetchSensors(); fetchHistory(); fetchAchievements(); fetchNetwork();
+    }
+
+    // Pet Face
+    function drawFace(s) {
+        const canvas = document.getElementById('petCanvas');
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width, h = canvas.height, score = s.overallScore, mood = s.mood;
+        const t = Date.now();
+
+        ctx.clearRect(0, 0, w, h);
+
+        // Glow
+        const grad = ctx.createRadialGradient(w/2, h/2, 20, w/2, h/2, 100);
+        grad.addColorStop(0, mood.color + '33'); grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad; ctx.fillRect(0, 0, w, h);
+
+        // Blink
+        blinkTimer += 16;
+        if (blinkTimer > nextBlink) { isBlinking = true; blinkTimer = 0; nextBlink = 3000 + Math.random() * 4000; setTimeout(() => isBlinking = false, 150); }
+
+        // Eye tracking
+        const ex = (mouseX - 0.5) * 8, ey = (mouseY - 0.5) * 5;
+        const eyeY = h * 0.38, sp = 30;
+        const lx = w/2 - sp + ex, rx = w/2 + sp + ex, eyY = eyeY + ey;
+
+        ctx.fillStyle = mood.color; ctx.strokeStyle = mood.color; ctx.lineWidth = 3; ctx.lineCap = 'round';
+
+        if (isBlinking) {
+            // Closed eyes
+            ctx.beginPath(); ctx.moveTo(lx-8, eyY); ctx.lineTo(lx+8, eyY); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(rx-8, eyY); ctx.lineTo(rx+8, eyY); ctx.stroke();
+        } else if (score > 50) {
+            // Happy arcs
+            ctx.beginPath(); ctx.arc(lx, eyY, 10, Math.PI, 0); ctx.stroke();
+            ctx.beginPath(); ctx.arc(rx, eyY, 10, Math.PI, 0); ctx.stroke();
+        } else if (score > 20) {
+            // Dot eyes
+            ctx.beginPath(); ctx.arc(lx, eyY, 7, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.arc(rx, eyY, 7, 0, Math.PI*2); ctx.fill();
+        } else {
+            // X eyes
+            [lx, rx].forEach(cx => {
+                ctx.beginPath(); ctx.moveTo(cx-6, eyY-6); ctx.lineTo(cx+6, eyY+6); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(cx+6, eyY-6); ctx.lineTo(cx-6, eyY+6); ctx.stroke();
+            });
+        }
+
+        // Blush
+        if (score > 75) {
+            ctx.fillStyle = '#e91e6330';
+            ctx.beginPath(); ctx.ellipse(w/2-40, h*0.48, 14, 8, 0, 0, Math.PI*2); ctx.fill();
+            ctx.beginPath(); ctx.ellipse(w/2+40, h*0.48, 14, 8, 0, 0, Math.PI*2); ctx.fill();
+        }
+
+        // Mouth
+        ctx.strokeStyle = mood.color; ctx.lineWidth = 3;
+        const my = h * 0.6;
+        ctx.beginPath();
+        if (score > 70) ctx.arc(w/2, my-5, 25, 0.2, Math.PI-0.2);
+        else if (score > 50) ctx.arc(w/2, my, 15, 0.3, Math.PI-0.3);
+        else if (score > 30) { ctx.moveTo(w/2-15, my+5); ctx.lineTo(w/2+15, my+5); }
+        else if (score > 15) ctx.arc(w/2, my+22, 15, Math.PI+0.3, -0.3);
+        else { ctx.arc(w/2, my+25, 20, Math.PI+0.2, -0.2); ctx.stroke(); ctx.fillStyle='#64b5f6'; ctx.beginPath(); ctx.ellipse(w/2+48, eyY+12, 4, 6, 0, 0, Math.PI*2); ctx.fill(); return; }
+        ctx.stroke();
+
+        // Sleep Zs at night
+        const hour = new Date().getHours();
+        if (hour >= 23 || hour < 6) {
+            ctx.fillStyle = mood.color + '88'; ctx.font = '16px sans-serif';
+            const zy = h*0.25 + Math.sin(t/800)*8;
+            ctx.fillText('z', w/2+30, zy); ctx.font = '22px sans-serif'; ctx.fillText('Z', w/2+42, zy-14);
+            ctx.font = '12px sans-serif'; ctx.fillText('z', w/2+52, zy-24);
+        }
+
+        // Breathing
+        const breathe = Math.sin(t / 1500) * 2;
+        canvas.style.transform = `scale(${1 + breathe * 0.004})`;
+    }
+
+    // Achievements
+    async function fetchAchievements() {
+        try {
+            const res = await fetch('/api/achievements');
+            const data = await res.json();
+            renderAchievements(data);
+        } catch {}
+    }
+    function renderAchievements(data) {
+        if (!data?.achievements) return;
+        document.getElementById('achCount').textContent = `(${data.unlocked}/${data.total})`;
+        const grid = document.getElementById('achievementsGrid');
+        grid.innerHTML = data.achievements.map(a => {
+            const unlocked = !!a.unlockedAt;
+            const dateStr = unlocked ? new Date(a.unlockedAt).toLocaleDateString('pt-BR') : '';
+            const progressHtml = (!unlocked && a.progress !== undefined && a.progressMax)
+                ? `<div class="ach-progress"><div class="ach-progress-fill" style="width:${(a.progress/a.progressMax)*100}%"></div></div>`
+                : '';
+            return `<div class="achievement ${unlocked?'unlocked':'locked'}" title="${a.description}">
+                <div class="ach-icon">${unlocked ? a.icon : '?'}</div>
+                <div class="ach-name">${unlocked ? a.name : '???'}</div>
+                <div class="ach-desc">${a.description || ''}</div>
+                ${progressHtml}
+                ${dateStr ? `<div class="ach-date">${dateStr}</div>` : ''}
+            </div>`;
+        }).join('');
+    }
+
+    // Network
+    async function fetchNetwork() {
+        try {
+            const res = await fetch('/api/pets/network');
+            const peers = await res.json();
+            renderNetwork(peers);
+        } catch {}
+    }
+    function renderNetwork(peers) {
+        const section = document.getElementById('networkSection');
+        const container = document.getElementById('networkPets');
+        if (!peers || peers.length === 0) { section.style.display = 'none'; return; }
+        section.style.display = 'block';
+        const needs = ['energia','limpeza','saude','seguranca','humor','social'];
+        container.innerHTML = peers.map(p => {
+            const hearts = p.friendship ? '&#x2764;'.repeat(Math.min(5, Math.floor(p.friendship.level / 5))) + ` Lv${p.friendship.level}` : '';
+            const snap = p.snapshot;
+            const face = snap?.mood?.face || '(?)';
+            const name = snap?.name || p.peerId?.slice(-6) || '?';
+            const sprite = snap?.stage?.sprite || '?';
+            return `<div class="peer-pet">
+                <div class="peer-sprite">${sprite}</div>
+                <div class="peer-name">${name}</div>
+                <div class="peer-mood">${face}</div>
+                ${hearts ? `<div class="peer-hearts">${hearts}</div>` : ''}
+                <div class="peer-gift">
+                    <select id="gift-${p.peerId}">${needs.map(n=>`<option value="${n}">${n}</option>`).join('')}</select>
+                    <button onclick="sendGift('${p.peerId}')">Gift</button>
+                </div>
+            </div>`;
+        }).join('');
+    }
+    async function sendGift(peerId) {
+        const sel = document.getElementById('gift-'+peerId);
+        if (!sel) return;
+        try {
+            const res = await fetch('/api/pets/gift', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ peerId, needKey: sel.value }) });
+            const data = await res.json();
+            if (data.ok) showToast(data.message || 'Gift enviado!');
+        } catch {}
+    }
+
+    // History
+    async function fetchHistory() {
+        try {
+            const res = await fetch('/api/pet/history');
+            drawHistory(await res.json());
+        } catch {}
+    }
+    const NEED_COLORS = { energia:'#ffeb3b', limpeza:'#42a5f5', saude:'#4caf50', seguranca:'#ab47bc', humor:'#ff9800', social:'#e91e63' };
+    function drawHistory(data) {
+        const canvas = document.getElementById('historyCanvas');
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width = canvas.offsetWidth, h = canvas.height = 180;
+        ctx.clearRect(0, 0, w, h);
+        if (!data || data.length < 2) return;
+
+        // Grid
+        ctx.strokeStyle = '#30363d'; ctx.lineWidth = 0.5;
+        for (let y = 0; y <= 100; y += 25) { const py = h-(y/100)*h; ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(w,py); ctx.stroke(); }
+        ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif';
+        [0,25,50,75,100].forEach(v => ctx.fillText(v+'%', 2, h-(v/100)*h-2));
+
+        // Score line (thick)
+        ctx.strokeStyle = '#e91e63'; ctx.lineWidth = 2.5; ctx.beginPath();
+        data.forEach((p,i) => { const x=(i/(data.length-1))*w, y=h-(p.score/100)*h; i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+        ctx.stroke();
+        // Fill
+        ctx.lineTo(w,h); ctx.lineTo(0,h); ctx.closePath();
+        const g = ctx.createLinearGradient(0,0,0,h); g.addColorStop(0,'#e91e6322'); g.addColorStop(1,'transparent');
+        ctx.fillStyle = g; ctx.fill();
+
+        // Need lines
+        const needKeys = Object.keys(NEED_COLORS);
+        needKeys.forEach(key => {
+            if (!data[0].needs?.[key]) return;
+            ctx.strokeStyle = NEED_COLORS[key]; ctx.lineWidth = 1; ctx.globalAlpha = 0.5;
+            ctx.beginPath();
+            data.forEach((p,i) => { const x=(i/(data.length-1))*w, y=h-((p.needs[key]||0)/100)*h; i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+            ctx.stroke(); ctx.globalAlpha = 1;
+        });
+
+        // Legend
+        const legend = document.getElementById('chartLegend');
+        legend.innerHTML = `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:#e91e63;height:3px"></div>Score</div>` +
+            needKeys.map(k => `<div class="chart-legend-item"><div class="chart-legend-dot" style="background:${NEED_COLORS[k]}"></div>${k}</div>`).join('');
+    }
+
+    // Sensors
+    async function fetchSensors() {
+        try {
+            const res = await fetch('/api/sensors');
+            document.getElementById('sensorsData').textContent = JSON.stringify(await res.json(), null, 2);
+        } catch {}
+    }
+
+    // Toast
+    function showToast(msg) {
+        const t = document.getElementById('toast');
+        t.innerHTML = msg; t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 3500);
+    }
+
+    // Rename
+    document.getElementById('petName').addEventListener('click', () => {
+        const name = prompt('Novo nome para o pet:');
+        if (name) fetch('/api/pet/name', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name}) });
+    });
+
+    // Animation loop
+    function loop() {
+        if (petState) drawFace(petState);
+        requestAnimationFrame(loop);
+    }
+
+    connect(); loop();
+    </script>
+</body>
+</html>

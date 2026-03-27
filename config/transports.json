@@ -1,0 +1,41 @@
+{
+  "transports": {
+    "whatsapp": {
+      "enabled": true,
+      "priority": 1,
+      "groups": []
+    },
+    "telegram": {
+      "enabled": false,
+      "priority": 2,
+      "botToken": "",
+      "chatId": ""
+    },
+    "email": {
+      "enabled": false,
+      "priority": 3,
+      "defaultTo": "",
+      "autoSend": false
+    },
+    "webhook": {
+      "enabled": false,
+      "priority": 4,
+      "endpoints": {}
+    }
+  },
+  "queue": {
+    "persistPath": "./data/queue.json",
+    "maxRetries": 5,
+    "processInterval": 5000
+  },
+  "mesh": {
+    "discoveryInterval": 120000,
+    "heartbeatInterval": 60000
+  },
+  "fallback": "queue",
+  "retryPolicy": {
+    "maxRetries": 5,
+    "backoff": "exponential",
+    "initialDelay": 2000
+  }
+}

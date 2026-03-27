@@ -1,0 +1,12 @@
+{
+  "version": "0.4.0",
+  "buildDate": "2026-03-23T07:00:00.000Z",
+  "commit": "cff80ab",
+  "features": [
+    "multi-channel-transport",
+    "mesh-p2p",
+    "task-receipt-ledger",
+    "local-mcp-tools",
+    "monitor-watchdog"
+  ]
+}
