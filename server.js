@@ -97,6 +97,26 @@ function requireAuth(req, res, next) {
 app.use(express.json());
 app.use(express.static('public'));
 
+// ─── Rate Limiting ────────────────────────────────────────────────────
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 min
+const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '60', 10); // 60 req/min
+const rateLimitMap = new Map();
+
+async function callMcpTool(tool, args = {}, req = null) {
+  let lastError;
+
+  const auth = req.get('authorization') || '';
+  const queryToken = req.query.token;
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : queryToken;
+
+  if (token === DASHBOARD_TOKEN) return next();
+
+  res.status(401).json({ error: 'Token inválido ou ausente', hint: 'Envie Authorization: Bearer <token>' });
+}
+
+// Rotas públicas (sem auth): health, monitor, services GET, dashboard HTML
+// Rotas protegidas: tudo que modifica estado (send, deploy, mcp, etc)
+
 // ─── Helper: chama MCP tool no gateway (com retry para 502/503) ──────
 let _mcpCallId = 0;
 const MCP_MAX_RETRIES = 3;
