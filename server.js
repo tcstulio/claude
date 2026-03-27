@@ -54,12 +54,25 @@ function authHeaders(req) {
   return h;
 }
 
-// Extrai token do header Authorization do request
-function getRequestToken(req) {
-  const auth = req?.get?.('authorization') || '';
-  if (auth.startsWith('Bearer ')) return auth.slice(7);
-  return '';
-}
+app.use(express.json());
+app.use(express.static('public'));
+
+// ─── Rate Limiting ────────────────────────────────────────────────────
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 min
+const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '60', 10); // 60 req/min
+const rateLimitMap = new Map();
+
+function rateLimit(req, res, next) {
+  const ip = req.ip || req.connection.remoteAddress || 'unknown';
+  const now = Date.now();
+  let entry = rateLimitMap.get(ip);
+
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW) {
+    entry = { count: 0, windowStart: now };
+    rateLimitMap.set(ip, entry);
+  }
+
+  entry.count++;
 
 // Middleware de autenticação — requer Bearer token válido no request
 // Aceita: master token, peer tokens do registry, ou tokens federados via hub
@@ -88,6 +101,26 @@ app.use(express.static('public'));
 const RATE_LIMIT_WINDOW = 60 * 1000; // 1 min
 const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '60', 10); // 60 req/min
 const rateLimitMap = new Map();
+
+async function callMcpTool(tool, args = {}, req = null) {
+  let lastError;
+
+  const auth = req.get('authorization') || '';
+  const queryToken = req.query.token;
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : queryToken;
+
+  if (token === DASHBOARD_TOKEN) return next();
+
+  res.status(401).json({ error: 'Token inválido ou ausente', hint: 'Envie Authorization: Bearer <token>' });
+}
+
+// Rotas públicas (sem auth): health, monitor, services GET, dashboard HTML
+// Rotas protegidas: tudo que modifica estado (send, deploy, mcp, etc)
+
+// ─── Helper: chama MCP tool no gateway (com retry para 502/503) ──────
+let _mcpCallId = 0;
+const MCP_MAX_RETRIES = 3;
+const MCP_RETRY_DELAYS = [2000, 4000, 8000]; // backoff exponencial
 
 async function callMcpTool(tool, args = {}, req = null) {
   let lastError;
@@ -150,18 +183,30 @@ async function callMcpTool(tool, args = {}, req = null) {
       return json;
 
     } catch (err) {
-      lastError = err;
-      const retryable = err.statusCode === 502 || err.statusCode === 503 || err.code === 'UND_ERR_CONNECT_TIMEOUT' || err.name === 'TimeoutError';
-
+      // Retry em 502/503 (gateway temporariamente fora)
+      const retryable = err.statusCode === 502 || err.statusCode === 503;
       if (retryable && attempt < MCP_MAX_RETRIES) {
         const delay = MCP_RETRY_DELAYS[attempt] || 8000;
-        console.log(`[mcp] ${tool} falhou (${err.message}), retry ${attempt + 1}/${MCP_MAX_RETRIES} em ${delay}ms`);
+        console.log(`[mcp] Retry ${attempt + 1}/${MCP_MAX_RETRIES} para ${tool} em ${delay}ms`);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
       metrics.trackMcpCall(false);
       throw err;
     }
+  }
+}
+
+// ─── Inicializa Storage (SQLite) ──────────────────────────────────────
+// Storage tenta better-sqlite3 (sync) primeiro; se não tiver, cai para sql.js (async)
+let storage;
+try {
+  storage = new Storage();
+  if (storage._adapter) {
+    console.log(`[storage] Usando ${storage._engine} — pronto`);
+  } else {
+    console.log('[storage] Construtor ok mas adapter null — fallback async');
+    storage = null;
   }
   throw lastError;
 }
