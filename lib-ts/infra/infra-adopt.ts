@@ -2,8 +2,8 @@
 // InfraAdopter — workflow to onboard infrastructure as network peers.
 
 import { EventEmitter } from "node:events";
-import { enrich } from "./capabilities.js";
-import type { TrustGraph } from "./trust.js";
+import { enrich } from "../capabilities.js";
+import type { TrustGraph } from "../mesh/trust.js";
 
 export const TYPE_CAPABILITIES: Record<string, string[]> = {
   proxmox: ["proxmox-vm", "proxmox-lxc", "compute", "backup", "monitoring"],

@@ -1,13 +1,12 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
-const path = require('node:path');
-const fs = require('node:fs');
-const os = require('node:os');
-const receipt = require('../lib/ledger/receipt');
-const Ledger = require('../lib/ledger/ledger');
+import { describe, it, beforeEach, expect } from 'vitest';
+import crypto from 'node:crypto';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import * as receipt from '../lib-ts/ledger/receipt.js';
+import { Ledger } from '../lib-ts/ledger/ledger.js';
 
 // Gerar keypair Ed25519 para testes
 function generateTestKeyPair() {
@@ -36,23 +35,23 @@ describe('TaskReceipt', () => {
         resourceUsed: { durationMs: 5000 },
       });
 
-      assert.ok(rcpt.id.startsWith('rcpt_'));
-      assert.equal(rcpt.taskId, 'task_001');
-      assert.equal(rcpt.from, 'agent_a');
-      assert.equal(rcpt.to, 'agent_b');
-      assert.equal(rcpt.skill, 'chat');
-      assert.ok(rcpt.resultHash.length === 64); // SHA-256 hex
-      assert.equal(rcpt.resourceUsed.durationMs, 5000);
-      assert.ok(rcpt.hash.length === 64);
-      assert.equal(rcpt.fromSignature, null);
-      assert.equal(rcpt.toSignature, null);
+      expect(rcpt.id.startsWith('rcpt_')).toBeTruthy();
+      expect(rcpt.taskId).toBe('task_001');
+      expect(rcpt.from).toBe('agent_a');
+      expect(rcpt.to).toBe('agent_b');
+      expect(rcpt.skill).toBe('chat');
+      expect(rcpt.resultHash.length === 64).toBeTruthy(); // SHA-256 hex
+      expect(rcpt.resourceUsed.durationMs).toBe(5000);
+      expect(rcpt.hash.length === 64).toBeTruthy();
+      expect(rcpt.fromSignature).toBe(null);
+      expect(rcpt.toSignature).toBe(null);
     });
 
     it('id derivado do hash', () => {
       const rcpt = receipt.createReceipt({
         taskId: 'task_002', from: 'a', to: 'b', skill: 's', result: 'r',
       });
-      assert.equal(rcpt.id, `rcpt_${rcpt.hash.slice(0, 16)}`);
+      expect(rcpt.id).toBe(`rcpt_${rcpt.hash.slice(0, 16)}`);
     });
   });
 
@@ -63,8 +62,8 @@ describe('TaskReceipt', () => {
       });
 
       const sig = receipt.signReceipt(rcpt.hash, keysA.privateKey);
-      assert.ok(sig.length > 0);
-      assert.ok(receipt.verifySignature(rcpt.hash, sig, keysA.publicKey));
+      expect(sig.length > 0).toBeTruthy();
+      expect(receipt.verifySignature(rcpt.hash, sig, keysA.publicKey)).toBeTruthy();
     });
 
     it('assinatura inválida com chave errada', () => {
@@ -73,7 +72,7 @@ describe('TaskReceipt', () => {
       });
 
       const sig = receipt.signReceipt(rcpt.hash, keysA.privateKey);
-      assert.ok(!receipt.verifySignature(rcpt.hash, sig, keysB.publicKey));
+      expect(receipt.verifySignature(rcpt.hash, sig, keysB.publicKey)).not.toBeTruthy();
     });
   });
 
@@ -91,9 +90,9 @@ describe('TaskReceipt', () => {
         toPublicKey: keysB.publicKey,
       });
 
-      assert.ok(result.valid);
-      assert.ok(result.dualSigned);
-      assert.equal(result.errors.length, 0);
+      expect(result.valid).toBeTruthy();
+      expect(result.dualSigned).toBeTruthy();
+      expect(result.errors.length).toBe(0);
     });
 
     it('receipt com hash adulterado é inválido', () => {
@@ -104,8 +103,8 @@ describe('TaskReceipt', () => {
       rcpt.skill = 'hacked'; // adultera campo
 
       const result = receipt.verifyReceipt(rcpt, { fromPublicKey: keysA.publicKey });
-      assert.ok(!result.valid);
-      assert.ok(result.errors.some(e => e.includes('Hash inválido')));
+      expect(result.valid).not.toBeTruthy();
+      expect(result.errors.some(e => e.includes('Hash inválido'))).toBeTruthy();
     });
 
     it('receipt sem assinatura é inválido', () => {
@@ -113,15 +112,15 @@ describe('TaskReceipt', () => {
         taskId: 't5', from: 'a', to: 'b', skill: 'chat', result: 'ok',
       });
       const result = receipt.verifyReceipt(rcpt);
-      assert.ok(!result.valid);
-      assert.ok(result.errors.some(e => e.includes('Nenhuma assinatura')));
+      expect(result.valid).not.toBeTruthy();
+      expect(result.errors.some(e => e.includes('Nenhuma assinatura'))).toBeTruthy();
     });
   });
 });
 
 describe('Ledger', () => {
-  let ledger;
-  let tmpDir;
+  let ledger: InstanceType<typeof Ledger>;
+  let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-test-'));
@@ -141,11 +140,11 @@ describe('Ledger', () => {
       rcpt.fromSignature = 'fake_sig';
 
       const result = ledger.addReceipt(rcpt);
-      assert.ok(!result.duplicate);
-      assert.ok(result.earned);
-      assert.equal(result.credits, 2); // 1 base + 1 (15s/10s)
-      assert.equal(result.balance.credits, 102); // 100 bootstrap + 2
-      assert.equal(result.balance.earned, 2);
+      expect(result.duplicate).not.toBeTruthy();
+      expect(result.earned).toBeTruthy();
+      expect(result.credits).toBe(2); // 1 base + 1 (15s/10s)
+      expect(result.balance.credits).toBe(102); // 100 bootstrap + 2
+      expect(result.balance.earned).toBe(2);
     });
 
     it('adiciona receipt e atualiza saldo (spent)', () => {
@@ -156,10 +155,10 @@ describe('Ledger', () => {
       rcpt.fromSignature = 'fake_sig';
 
       const result = ledger.addReceipt(rcpt);
-      assert.ok(!result.earned);
-      assert.equal(result.credits, 1); // 1 base + 0 (5s < 10s)
-      assert.equal(result.balance.credits, 99); // 100 - 1
-      assert.equal(result.balance.spent, 1);
+      expect(result.earned).not.toBeTruthy();
+      expect(result.credits).toBe(1); // 1 base + 0 (5s < 10s)
+      expect(result.balance.credits).toBe(99); // 100 - 1
+      expect(result.balance.spent).toBe(1);
     });
 
     it('deduplicação por ID', () => {
@@ -171,22 +170,24 @@ describe('Ledger', () => {
 
       ledger.addReceipt(rcpt);
       const result = ledger.addReceipt(rcpt);
-      assert.ok(result.duplicate);
+      expect(result.duplicate).toBeTruthy();
     });
 
-    it('emite evento receipt-added', (_, done) => {
-      ledger.on('receipt-added', (data) => {
-        assert.ok(data.receipt);
-        assert.ok(typeof data.credits === 'number');
-        done();
-      });
+    it('emite evento receipt-added', () => {
+      return new Promise<void>((resolve) => {
+        ledger.on('receipt-added', (data) => {
+          expect(data.receipt).toBeTruthy();
+          expect(typeof data.credits === 'number').toBeTruthy();
+          resolve();
+        });
 
-      const rcpt = receipt.createReceipt({
-        taskId: 't4', from: 'agent_peer', to: 'agent_self',
-        skill: 'chat', result: 'ok',
+        const rcpt = receipt.createReceipt({
+          taskId: 't4', from: 'agent_peer', to: 'agent_self',
+          skill: 'chat', result: 'ok',
+        });
+        rcpt.fromSignature = 'sig';
+        ledger.addReceipt(rcpt);
       });
-      rcpt.fromSignature = 'sig';
-      ledger.addReceipt(rcpt);
     });
   });
 
@@ -200,8 +201,8 @@ describe('Ledger', () => {
         r.fromSignature = 'sig';
         ledger.addReceipt(r);
       }
-      assert.equal(ledger.getReceipts({ peer: 'peer_a' }).length, 2);
-      assert.equal(ledger.getReceipts({ peer: 'peer_b' }).length, 1);
+      expect(ledger.getReceipts({ peer: 'peer_a' }).length).toBe(2);
+      expect(ledger.getReceipts({ peer: 'peer_b' }).length).toBe(1);
     });
 
     it('filtra por skill', () => {
@@ -212,7 +213,7 @@ describe('Ledger', () => {
         r.fromSignature = 'sig';
         ledger.addReceipt(r);
       });
-      assert.equal(ledger.getReceipts({ skill: 'chat' }).length, 2);
+      expect(ledger.getReceipts({ skill: 'chat' }).length).toBe(2);
     });
   });
 
@@ -228,9 +229,9 @@ describe('Ledger', () => {
       // Cria novo ledger do mesmo dir
       const ledger2 = new Ledger({ nodeId: 'agent_self', dataDir: tmpDir });
       const receipts = ledger2.getReceipts();
-      assert.equal(receipts.length, 1);
-      assert.equal(receipts[0].taskId, 't_persist');
-      assert.equal(ledger2.getBalance().spent, 1);
+      expect(receipts.length).toBe(1);
+      expect(receipts[0].taskId).toBe('t_persist');
+      expect(ledger2.getBalance().spent).toBe(1);
     });
   });
 
@@ -244,10 +245,10 @@ describe('Ledger', () => {
       ledger.addReceipt(rcpt);
 
       const summary = ledger.getSummary();
-      assert.equal(summary.nodeId, 'agent_self');
-      assert.equal(summary.receipts, 1);
-      assert.ok(summary.balance.credits > 100);
-      assert.ok(summary.summary.bySkill.chat);
+      expect(summary.nodeId).toBe('agent_self');
+      expect(summary.receipts).toBe(1);
+      expect(summary.balance.credits > 100).toBeTruthy();
+      expect(summary.summary.bySkill.chat).toBeTruthy();
     });
   });
 });

@@ -1,20 +1,19 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const FederatedSearch = require('../lib/mesh/federation');
+import { describe, it, beforeEach, expect } from 'vitest';
+import { FederatedSearch } from '../lib-ts/mesh/federation.js';
 
 // Mock MeshManager mínimo
-function createMockMesh(peers = [], queryResults = []) {
+function createMockMesh(peers: any[] = [], queryResults: any[] = []) {
   return {
     nodeId: 'self_node',
     registry: {
-      get: (id) => peers.find(p => p.nodeId === id) || null,
+      get: (id: string) => peers.find(p => p.nodeId === id) || null,
       list: () => peers,
       online: () => peers.filter(p => p.status === 'online'),
     },
-    queryBySkill: (_skill) => queryResults,
-    sendPrompt: async (nodeId, prompt) => ({
+    queryBySkill: (_skill: string) => queryResults,
+    sendPrompt: async (nodeId: string, prompt: string) => ({
       method: 'direct',
       response: `Response from ${nodeId}: ${prompt}`,
       model: 'test',
@@ -23,8 +22,8 @@ function createMockMesh(peers = [], queryResults = []) {
 }
 
 // Mock fetch para simular hubs remotos
-function createMockFetch(responses = {}) {
-  return async (url, options = {}) => {
+function createMockFetch(responses: Record<string, any> = {}) {
+  return async (url: string, options: any = {}) => {
     for (const [pattern, handler] of Object.entries(responses)) {
       if (url.includes(pattern)) {
         const result = typeof handler === 'function' ? handler(url, options) : handler;
@@ -51,9 +50,9 @@ describe('FederatedSearch', () => {
       const fed = new FederatedSearch({ mesh, maxHops: 0 });
 
       const result = await fed.query('chat');
-      assert.equal(result.local, 2);
-      assert.equal(result.total, 2);
-      assert.equal(result.results[0].peer.nodeId, 'peer_a'); // maior score primeiro
+      expect(result.local).toBe(2);
+      expect(result.total).toBe(2);
+      expect(result.results[0].peer.nodeId).toBe('peer_a'); // maior score primeiro
     });
 
     it('dedup por queryId', async () => {
@@ -61,11 +60,11 @@ describe('FederatedSearch', () => {
       const fed = new FederatedSearch({ mesh, maxHops: 0 });
 
       const r1 = await fed.query('chat', { queryId: 'q_test_1' });
-      assert.equal(r1.total, 1);
+      expect(r1.total).toBe(1);
 
       const r2 = await fed.query('chat', { queryId: 'q_test_1' });
-      assert.ok(r2.deduplicated);
-      assert.equal(r2.results.length, 0);
+      expect(r2.deduplicated).toBeTruthy();
+      expect(r2.results.length).toBe(0);
     });
   });
 
@@ -92,9 +91,9 @@ describe('FederatedSearch', () => {
       });
 
       const result = await fed.query('code-execution');
-      assert.equal(result.remote, 1);
-      assert.ok(result.results.some(r => r.peer?.nodeId === 'remote_a'));
-      assert.equal(result.results.find(r => r.peer?.nodeId === 'remote_a').via, 'hub_1');
+      expect(result.remote).toBe(1);
+      expect(result.results.some(r => r.peer?.nodeId === 'remote_a')).toBeTruthy();
+      expect(result.results.find(r => r.peer?.nodeId === 'remote_a').via).toBe('hub_1');
     });
 
     it('merge dedup: local prevalece sobre remote', async () => {
@@ -123,9 +122,9 @@ describe('FederatedSearch', () => {
       const result = await fed.query('chat');
       // peer_a aparece só 1x (versão local com score 0.9)
       const peerA = result.results.filter(r => r.peer?.nodeId === 'peer_a');
-      assert.equal(peerA.length, 1);
-      assert.equal(peerA[0].source, 'local');
-      assert.equal(result.total, 2); // a (local) + b (remote)
+      expect(peerA.length).toBe(1);
+      expect(peerA[0].source).toBe('local');
+      expect(result.total).toBe(2); // a (local) + b (remote)
     });
   });
 
@@ -143,7 +142,7 @@ describe('FederatedSearch', () => {
       await fed.query('c');
       const r4 = await fed.query('d');
 
-      assert.ok(r4.rateLimited);
+      expect(r4.rateLimited).toBeTruthy();
     });
   });
 
@@ -157,8 +156,8 @@ describe('FederatedSearch', () => {
       const fed = new FederatedSearch({ mesh });
 
       const result = await fed.relay('peer_a', 'Hello');
-      assert.equal(result.method, 'direct');
-      assert.ok(result.response.includes('peer_a'));
+      expect(result.method).toBe('direct');
+      expect(result.response).toMatch(/peer_a/);
     });
 
     it('erro para peer inalcançável', async () => {
@@ -172,10 +171,9 @@ describe('FederatedSearch', () => {
         fetch: async () => ({ ok: false, status: 404 }),
       });
 
-      await assert.rejects(
-        () => fed.relay('peer_z', 'Hello'),
-        { message: /Sem rota/ },
-      );
+      await expect(
+        () => fed.relay('peer_z', 'Hello')
+      ).rejects.toThrow(/No route/);
     });
 
     it('relay via hub intermediário', async () => {
@@ -197,9 +195,9 @@ describe('FederatedSearch', () => {
       });
 
       const result = await fed.relay('peer_target', 'Hello via relay');
-      assert.equal(result.method, 'relay');
-      assert.equal(result.via, 'hub_1');
-      assert.equal(result.response, 'Relayed response');
+      expect(result.method).toBe('relay');
+      expect(result.via).toBe('hub_1');
+      expect(result.response).toBe('Relayed response');
     });
 
     it('rate limit em relays', async () => {
@@ -214,10 +212,9 @@ describe('FederatedSearch', () => {
 
       await fed.relay('p', 'a');
       await fed.relay('p', 'b');
-      await assert.rejects(
-        () => fed.relay('p', 'c'),
-        { message: /Rate limit/ },
-      );
+      await expect(
+        () => fed.relay('p', 'c')
+      ).rejects.toThrow(/Rate limit/);
     });
   });
 
@@ -230,9 +227,9 @@ describe('FederatedSearch', () => {
       await fed.query('b');
 
       const stats = fed.stats();
-      assert.equal(stats.queries.recent, 2);
-      assert.equal(stats.relays.recent, 0);
-      assert.ok(stats.queries.max > 0);
+      expect(stats.queries.recent).toBe(2);
+      expect(stats.relays.recent).toBe(0);
+      expect(stats.queries.max > 0).toBeTruthy();
     });
   });
 });

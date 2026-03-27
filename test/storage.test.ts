@@ -1,23 +1,23 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, before, after } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('fs');
-const path = require('path');
+import { describe, it, beforeAll, afterAll, expect } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import Storage from '../lib-ts/storage.js';
 
-const Storage = require('../lib/storage');
-
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_DB = path.join(__dirname, '../data/test-storage.db');
 
 describe('Storage (SQLite)', () => {
-  let storage;
+  let storage: InstanceType<typeof Storage>;
 
-  before(() => {
+  beforeAll(() => {
     if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB);
     storage = new Storage(TEST_DB);
   });
 
-  after(() => {
+  afterAll(() => {
     storage.close();
     if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB);
     // Remove WAL/SHM files
@@ -43,20 +43,20 @@ describe('Storage (SQLite)', () => {
       });
 
       const pending = storage.getPendingMessages();
-      assert.ok(pending.length >= 1);
-      const msg = pending.find(m => m.id === 'msg-001');
-      assert.ok(msg);
-      assert.equal(msg.destination, '5511999999999');
-      assert.deepEqual(msg.message, { text: 'Olá mundo' });
+      expect(pending.length >= 1).toBeTruthy();
+      const msg = pending.find((m: any) => m.id === 'msg-001');
+      expect(msg).toBeTruthy();
+      expect(msg.destination).toBe('5511999999999');
+      expect(msg.message).toEqual({ text: 'Olá mundo' });
     });
 
     it('marca como entregue', () => {
       storage.markDelivered('msg-001');
       const pending = storage.getPendingMessages();
-      assert.ok(!pending.find(m => m.id === 'msg-001'));
+      expect(pending.find((m: any) => m.id === 'msg-001')).not.toBeTruthy();
 
       const delivered = storage.getRecentMessages('delivered');
-      assert.ok(delivered.find(m => m.id === 'msg-001'));
+      expect(delivered.find((m: any) => m.id === 'msg-001')).toBeTruthy();
     });
 
     it('marca como falha', () => {
@@ -70,20 +70,20 @@ describe('Storage (SQLite)', () => {
       });
       storage.markFailed('msg-002', 'timeout');
       const failed = storage.getRecentMessages('failed');
-      const msg = failed.find(m => m.id === 'msg-002');
-      assert.ok(msg);
-      assert.equal(msg.failedReason, 'timeout');
+      const msg = failed.find((m: any) => m.id === 'msg-002');
+      expect(msg).toBeTruthy();
+      expect(msg.failedReason).toBe('timeout');
     });
 
     it('busca mensagens por texto', () => {
       const results = storage.searchMessages('5511999');
-      assert.ok(results.length >= 1);
+      expect(results.length >= 1).toBeTruthy();
     });
 
     it('retorna estatísticas de mensagens', () => {
       const stats = storage.getMessageStats();
-      assert.ok(stats.delivered >= 1);
-      assert.ok(stats.failed >= 1);
+      expect(stats.delivered >= 1).toBeTruthy();
+      expect(stats.failed >= 1).toBeTruthy();
     });
   });
 
@@ -100,30 +100,30 @@ describe('Storage (SQLite)', () => {
       });
 
       const task = storage.getTask('task-001');
-      assert.ok(task);
-      assert.equal(task.type, 'analyze');
-      assert.equal(task.priority, 3);
-      assert.deepEqual(task.input, { data: [1, 2, 3] });
+      expect(task).toBeTruthy();
+      expect(task.type).toBe('analyze');
+      expect(task.priority).toBe(3);
+      expect(task.input).toEqual({ data: [1, 2, 3] });
     });
 
     it('lista por status', () => {
       const pending = storage.getTasksByStatus('pending');
-      assert.ok(pending.length >= 1);
+      expect(pending.length >= 1).toBeTruthy();
     });
 
     it('atualiza status para running', () => {
       storage.updateTaskStatus('task-001', 'running');
       const task = storage.getTask('task-001');
-      assert.equal(task.status, 'running');
-      assert.ok(task.startedAt);
+      expect(task.status).toBe('running');
+      expect(task.startedAt).toBeTruthy();
     });
 
     it('atualiza status para completed com output', () => {
       storage.updateTaskStatus('task-001', 'completed', { output: { result: 'ok' } });
       const task = storage.getTask('task-001');
-      assert.equal(task.status, 'completed');
-      assert.deepEqual(task.output, { result: 'ok' });
-      assert.ok(task.completedAt);
+      expect(task.status).toBe('completed');
+      expect(task.output).toEqual({ result: 'ok' });
+      expect(task.completedAt).toBeTruthy();
     });
 
     it('subtarefas por parent_id', () => {
@@ -141,13 +141,13 @@ describe('Storage (SQLite)', () => {
       });
 
       const subs = storage.getSubtasks('task-001');
-      assert.equal(subs.length, 2);
+      expect(subs.length).toBe(2);
     });
 
     it('retorna estatísticas de tarefas', () => {
       const stats = storage.getTaskStats();
-      assert.ok(stats.completed >= 1);
-      assert.ok(stats.pending >= 0);
+      expect(stats.completed >= 1).toBeTruthy();
+      expect(stats.pending >= 0).toBeTruthy();
     });
   });
 
@@ -164,9 +164,9 @@ describe('Storage (SQLite)', () => {
       });
 
       const peer = storage.getPeer('node-abc123');
-      assert.ok(peer);
-      assert.equal(peer.name, 'Peer Test');
-      assert.deepEqual(peer.capabilities, ['hub', 'relay']);
+      expect(peer).toBeTruthy();
+      expect(peer.name).toBe('Peer Test');
+      expect(peer.capabilities).toEqual(['hub', 'relay']);
     });
 
     it('atualiza peer existente', () => {
@@ -177,18 +177,18 @@ describe('Storage (SQLite)', () => {
       });
 
       const peer = storage.getPeer('node-abc123');
-      assert.equal(peer.name, 'Peer Test Updated');
-      assert.equal(peer.latency, 42);
+      expect(peer.name).toBe('Peer Test Updated');
+      expect(peer.latency).toBe(42);
     });
 
     it('lista todos os peers', () => {
       const all = storage.getAllPeers();
-      assert.ok(all.length >= 1);
+      expect(all.length >= 1).toBeTruthy();
     });
 
     it('remove peer', () => {
       storage.removePeer('node-abc123');
-      assert.equal(storage.getPeer('node-abc123'), null);
+      expect(storage.getPeer('node-abc123')).toBe(null);
     });
   });
 
@@ -201,20 +201,20 @@ describe('Storage (SQLite)', () => {
       storage.log('other.event', 'source-1', null, {});
 
       const logs = storage.getAuditLog({ event: 'test.event' });
-      assert.ok(logs.length >= 2);
-      assert.equal(logs[0].event, 'test.event');
+      expect(logs.length >= 2).toBeTruthy();
+      expect(logs[0].event).toBe('test.event');
     });
 
     it('filtra por source', () => {
       const logs = storage.getAuditLog({ source: 'source-1' });
-      assert.ok(logs.length >= 1);
+      expect(logs.length >= 1).toBeTruthy();
     });
 
     it('retorna stats gerais', () => {
       const stats = storage.stats;
-      assert.ok(stats.messages);
-      assert.ok(stats.tasks);
-      assert.ok(stats.auditEntries >= 3);
+      expect(stats.messages).toBeTruthy();
+      expect(stats.tasks).toBeTruthy();
+      expect(stats.auditEntries >= 3).toBeTruthy();
     });
   });
 });

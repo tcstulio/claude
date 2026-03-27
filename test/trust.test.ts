@@ -1,11 +1,10 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const TrustGraph = require('../lib/mesh/trust');
+import { describe, it, beforeEach, expect } from 'vitest';
+import { TrustGraph } from '../lib-ts/mesh/trust.js';
 
 describe('TrustGraph', () => {
-  let trust;
+  let trust: any;
 
   beforeEach(() => {
     trust = new TrustGraph({
@@ -20,19 +19,19 @@ describe('TrustGraph', () => {
   describe('setDirectTrust / getDirectTrust', () => {
     it('define e retorna trust direto', () => {
       trust.setDirectTrust('peer_a', 0.8, 'manual');
-      assert.equal(trust.getDirectTrust('peer_a'), 0.8);
+      expect(trust.getDirectTrust('peer_a')).toBe(0.8);
     });
 
     it('clamp entre 0 e 1', () => {
       trust.setDirectTrust('peer_b', 1.5);
-      assert.equal(trust.getDirectTrust('peer_b'), 1.0);
+      expect(trust.getDirectTrust('peer_b')).toBe(1.0);
 
       trust.setDirectTrust('peer_c', -0.5);
-      assert.equal(trust.getDirectTrust('peer_c'), 0.0);
+      expect(trust.getDirectTrust('peer_c')).toBe(0.0);
     });
 
     it('retorna null para peer desconhecido', () => {
-      assert.equal(trust.getDirectTrust('unknown'), null);
+      expect(trust.getDirectTrust('unknown')).toBe(null);
     });
   });
 
@@ -43,8 +42,8 @@ describe('TrustGraph', () => {
         metadata: { reputation: 50, endorsed: true },
       });
       // base=0.6*0.3 + rep=0.5*0.3 + interaction=0.5*0.4 = 0.18+0.15+0.2 = 0.53
-      assert.ok(score > 0.5);
-      assert.ok(score < 0.7);
+      expect(score > 0.5).toBeTruthy();
+      expect(score < 0.7).toBeTruthy();
     });
 
     it('peer owner = trust alto', () => {
@@ -53,7 +52,7 @@ describe('TrustGraph', () => {
         metadata: { reputation: 100, relation: 'owner' },
       });
       // base=1.0*0.3 + rep=1.0*0.3 + interaction=0.5*0.4 = 0.3+0.3+0.2 = 0.8
-      assert.ok(score >= 0.8);
+      expect(score >= 0.8).toBeTruthy();
     });
 
     it('peer com muitas interações positivas = trust alto', () => {
@@ -62,7 +61,7 @@ describe('TrustGraph', () => {
         { receiptsCount: 30, successRate: 0.95 },
       );
       // interaction = 0.95*0.7 + min(1,30/20)*0.3 = 0.665+0.3 = 0.965 * 0.4 = ~0.39
-      assert.ok(score > 0.55);
+      expect(score > 0.55).toBeTruthy();
     });
   });
 
@@ -70,30 +69,30 @@ describe('TrustGraph', () => {
     it('trust direto é retornado imediatamente', () => {
       trust.setDirectTrust('peer_a', 0.8);
       const result = trust.getTransitiveTrust('peer_a', () => new Map());
-      assert.equal(result.score, 0.8);
-      assert.equal(result.hops, 0);
+      expect(result.score).toBe(0.8);
+      expect(result.hops).toBe(0);
     });
 
     it('trust transitivo 1 hop', () => {
       trust.setDirectTrust('peer_a', 0.8);
 
       // peer_a confia em peer_b com 0.9
-      const getNeighbors = (nodeId) => {
+      const getNeighbors = (nodeId: string) => {
         if (nodeId === 'peer_a') return new Map([['peer_b', 0.9]]);
         return new Map();
       };
 
       const result = trust.getTransitiveTrust('peer_b', getNeighbors);
       // 0.8 * 0.9 * 0.7 = 0.504
-      assert.ok(Math.abs(result.score - 0.504) < 0.01);
-      assert.deepEqual(result.path, ['self', 'peer_a', 'peer_b']);
-      assert.equal(result.hops, 2);
+      expect(Math.abs(result.score - 0.504) < 0.01).toBeTruthy();
+      expect(result.path).toEqual(['self', 'peer_a', 'peer_b']);
+      expect(result.hops).toBe(2);
     });
 
     it('trust transitivo 2 hops', () => {
       trust.setDirectTrust('peer_a', 0.9);
 
-      const getNeighbors = (nodeId) => {
+      const getNeighbors = (nodeId: string) => {
         if (nodeId === 'peer_a') return new Map([['peer_b', 0.8]]);
         if (nodeId === 'peer_b') return new Map([['peer_c', 0.7]]);
         return new Map();
@@ -101,28 +100,28 @@ describe('TrustGraph', () => {
 
       const result = trust.getTransitiveTrust('peer_c', getNeighbors);
       // 0.9 * 0.8 * 0.7(decay) * 0.7 * 0.7(decay) = 0.9*0.8*0.7*0.7*0.7 = 0.24696
-      assert.ok(result.score > 0.2);
-      assert.ok(result.score < 0.4);
-      assert.equal(result.path.length, 4); // self -> a -> b -> c
+      expect(result.score > 0.2).toBeTruthy();
+      expect(result.score < 0.4).toBeTruthy();
+      expect(result.path.length).toBe(4); // self -> a -> b -> c
     });
 
     it('peer inalcançável retorna 0', () => {
       trust.setDirectTrust('peer_a', 0.8);
 
       const result = trust.getTransitiveTrust('peer_z', () => new Map());
-      assert.equal(result.score, 0);
+      expect(result.score).toBe(0);
     });
 
     it('cache funciona', () => {
       trust.setDirectTrust('peer_a', 0.8);
-      const getNeighbors = (nodeId) => {
+      const getNeighbors = (nodeId: string) => {
         if (nodeId === 'peer_a') return new Map([['peer_b', 0.9]]);
         return new Map();
       };
 
       const r1 = trust.getTransitiveTrust('peer_b', getNeighbors);
       const r2 = trust.getTransitiveTrust('peer_b', getNeighbors);
-      assert.equal(r1.score, r2.score);
+      expect(r1.score).toBe(r2.score);
     });
   });
 
@@ -139,9 +138,9 @@ describe('TrustGraph', () => {
       ];
 
       const ranking = trust.rankForDelegation(peers, { skill: 'chat' });
-      assert.equal(ranking[0].peer.nodeId, 'peer_a');
-      assert.equal(ranking[1].peer.nodeId, 'peer_c');
-      assert.equal(ranking[2].peer.nodeId, 'peer_b');
+      expect(ranking[0].peer.nodeId).toBe('peer_a');
+      expect(ranking[1].peer.nodeId).toBe('peer_c');
+      expect(ranking[2].peer.nodeId).toBe('peer_b');
     });
 
     it('filtra por eligible (threshold 0.3)', () => {
@@ -154,9 +153,9 @@ describe('TrustGraph', () => {
       ];
 
       const ranking = trust.rankForDelegation(peers, { skill: 'chat' });
-      const eligible = ranking.filter(r => r.eligible);
-      assert.equal(eligible.length, 1);
-      assert.equal(eligible[0].peer.nodeId, 'peer_a');
+      const eligible = ranking.filter((r: any) => r.eligible);
+      expect(eligible.length).toBe(1);
+      expect(eligible[0].peer.nodeId).toBe('peer_a');
     });
 
     it('peer sem skill recebe score penalizado', () => {
@@ -169,24 +168,24 @@ describe('TrustGraph', () => {
       ];
 
       const ranking = trust.rankForDelegation(peers, { skill: 'chat' });
-      assert.ok(ranking[0].peer.nodeId === 'peer_a');
-      assert.ok(!ranking[1].eligible); // sem skill chat = inelegível
+      expect(ranking[0].peer.nodeId === 'peer_a').toBeTruthy();
+      expect(!ranking[1].eligible).toBeTruthy(); // sem skill chat = inelegível
     });
   });
 
   describe('canDelegate', () => {
     it('true se trust >= threshold', () => {
       trust.setDirectTrust('peer_a', 0.5);
-      assert.ok(trust.canDelegate('peer_a'));
+      expect(trust.canDelegate('peer_a')).toBeTruthy();
     });
 
     it('false se trust < threshold', () => {
       trust.setDirectTrust('peer_b', 0.2);
-      assert.ok(!trust.canDelegate('peer_b'));
+      expect(!trust.canDelegate('peer_b')).toBeTruthy();
     });
 
     it('false para peer desconhecido', () => {
-      assert.ok(!trust.canDelegate('unknown'));
+      expect(!trust.canDelegate('unknown')).toBeTruthy();
     });
   });
 
@@ -196,9 +195,9 @@ describe('TrustGraph', () => {
       trust.setDirectTrust('b', 0.5, 'computed');
 
       const all = trust.getAllDirectTrust();
-      assert.equal(all.a.score, 0.8);
-      assert.equal(all.b.score, 0.5);
-      assert.equal(all.a.reason, 'manual');
+      expect(all.a.score).toBe(0.8);
+      expect(all.b.score).toBe(0.5);
+      expect(all.a.reason).toBe('manual');
     });
   });
 
@@ -206,10 +205,10 @@ describe('TrustGraph', () => {
     it('serializa corretamente', () => {
       trust.setDirectTrust('peer_a', 0.8);
       const json = trust.toJSON();
-      assert.equal(json.nodeId, 'self');
-      assert.ok(json.config);
-      assert.equal(json.config.delegationThreshold, 0.3);
-      assert.ok(json.directTrust.peer_a);
+      expect(json.nodeId).toBe('self');
+      expect(json.config).toBeTruthy();
+      expect(json.config.delegationThreshold).toBe(0.3);
+      expect(json.directTrust.peer_a).toBeTruthy();
     });
   });
 });

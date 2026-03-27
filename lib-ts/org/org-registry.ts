@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Organization } from "./organization.js";
 import type { OrgPolicies, MemberInfo } from "./organization.js";
-import type { TrustGraph } from "./trust.js";
+import type { TrustGraph } from "../mesh/trust.js";
 
 const ORG_REPUTATION_WEIGHT = 0.3;
 

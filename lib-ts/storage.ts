@@ -4,6 +4,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore TS1470 — import.meta is valid at runtime (package.json type=module)
 const require = createRequire(import.meta.url);
 
 const DEFAULT_DB_PATH: string = process.env.TULIPA_DB_PATH || './data/tulipa.db';
@@ -360,6 +362,7 @@ export class Storage {
   static async create(dbPath?: string): Promise<Storage> {
     const storage = new Storage(dbPath);
     if (storage._adapter) return storage;
+    // @ts-ignore TS7016 — sql.js lacks type declarations
     const initSqlJs = (await import('sql.js')).default;
     const SQL = await initSqlJs();
     const fullPath = dbPath || DEFAULT_DB_PATH;

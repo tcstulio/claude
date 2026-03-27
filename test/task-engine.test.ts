@@ -1,26 +1,27 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, before, after } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('fs');
-const path = require('path');
+import { describe, it, beforeAll, afterAll, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const Storage = require('../lib/storage');
-const TaskEngine = require('../lib/task-engine');
+import Storage from '../lib-ts/storage.js';
+import TaskEngine from '../lib-ts/task-engine.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEST_DB = path.join(__dirname, '../data/test-tasks.db');
 
 describe('TaskEngine', () => {
-  let storage;
-  let engine;
+  let storage: InstanceType<typeof Storage>;
+  let engine: InstanceType<typeof TaskEngine>;
 
-  before(() => {
+  beforeAll(() => {
     if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB);
     storage = new Storage(TEST_DB);
     engine = new TaskEngine({ storage, processInterval: 100 });
   });
 
-  after(() => {
+  afterAll(() => {
     engine.stop();
     storage.close();
     if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB);
@@ -36,21 +37,21 @@ describe('TaskEngine', () => {
       input: { reportId: 'r-001' },
       priority: 3,
     });
-    assert.ok(task.id);
-    assert.equal(task.type, 'send_report');
-    assert.equal(task.status, 'pending');
-    assert.equal(task.priority, 3);
+    expect(task.id).toBeTruthy();
+    expect(task.type).toBe('send_report');
+    expect(task.status).toBe('pending');
+    expect(task.priority).toBe(3);
   });
 
   it('tarefa aparece no storage', () => {
     const pending = storage.getTasksByStatus('pending');
-    assert.ok(pending.length >= 1);
+    expect(pending.length >= 1).toBeTruthy();
   });
 
   it('registra handler e executa tarefa', async () => {
     let executed = false;
 
-    engine.registerHandler('echo', async (task) => {
+    engine.registerHandler('echo', async (task: any) => {
       executed = true;
       return { echo: task.input.text };
     });
@@ -66,9 +67,9 @@ describe('TaskEngine', () => {
     await new Promise(r => setTimeout(r, 200));
 
     const result = storage.getTask(task.id);
-    assert.equal(result.status, 'completed');
-    assert.deepEqual(result.output, { echo: 'hello' });
-    assert.equal(executed, true);
+    expect(result.status).toBe('completed');
+    expect(result.output).toEqual({ echo: 'hello' });
+    expect(executed).toBe(true);
   });
 
   it('decompõe tarefa em subtarefas', () => {
@@ -80,9 +81,9 @@ describe('TaskEngine', () => {
       { type: 'echo', description: 'Parte 3', input: { text: 'c' } },
     ]);
 
-    assert.equal(subs.length, 3);
+    expect(subs.length).toBe(3);
     const stored = storage.getSubtasks(parent.id);
-    assert.equal(stored.length, 3);
+    expect(stored.length).toBe(3);
   });
 
   it('executa subtarefas e completa parent', async () => {
@@ -100,7 +101,7 @@ describe('TaskEngine', () => {
     await new Promise(r => setTimeout(r, 300));
 
     const parentTask = storage.getTask(parent.id);
-    assert.equal(parentTask.status, 'completed');
+    expect(parentTask.status).toBe('completed');
   });
 
   it('marca tarefa como failed após erro', async () => {
@@ -117,32 +118,32 @@ describe('TaskEngine', () => {
     await new Promise(r => setTimeout(r, 200));
 
     const result = storage.getTask(task.id);
-    assert.equal(result.status, 'failed');
-    assert.ok(result.error.includes('Sempre falha'));
+    expect(result.status).toBe('failed');
+    expect(result.error.includes('Sempre falha')).toBeTruthy();
   });
 
   it('emite eventos', async () => {
-    const events = [];
-    engine.on('task-created', (t) => events.push('created:' + t.id));
-    engine.on('task-completed', (e) => events.push('completed:' + e.taskId));
+    const events: string[] = [];
+    engine.on('task-created', (t: any) => events.push('created:' + t.id));
+    engine.on('task-completed', (e: any) => events.push('completed:' + e.taskId));
 
     const task = engine.submit('Evento test', { type: 'echo', input: { text: 'evt' } });
     await engine.processQueue();
     await new Promise(r => setTimeout(r, 200));
 
-    assert.ok(events.includes('created:' + task.id));
-    assert.ok(events.includes('completed:' + task.id));
+    expect(events.includes('created:' + task.id)).toBeTruthy();
+    expect(events.includes('completed:' + task.id)).toBeTruthy();
   });
 
   it('retorna toJSON com stats', () => {
     const json = engine.toJSON();
-    assert.ok(json.handlers.includes('echo'));
-    assert.ok(json.stats);
-    assert.ok(json.stats.completed >= 1);
+    expect(json.handlers.includes('echo')).toBeTruthy();
+    expect(json.stats).toBeTruthy();
+    expect(json.stats.completed >= 1).toBeTruthy();
   });
 
   it('respeita maxConcurrent', () => {
     const limitedEngine = new TaskEngine({ storage, maxConcurrent: 2 });
-    assert.equal(limitedEngine._maxConcurrent, 2);
+    expect(limitedEngine._maxConcurrent).toBe(2);
   });
 });

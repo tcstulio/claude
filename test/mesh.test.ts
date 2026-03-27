@@ -1,11 +1,10 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const MeshManager = require('../lib/mesh/index');
+import { describe, it, beforeEach, expect } from 'vitest';
+import MeshManager from '../lib-ts/mesh/mesh-manager.js';
 
 describe('MeshManager', () => {
-  let mesh;
+  let mesh: InstanceType<typeof MeshManager>;
 
   beforeEach(() => {
     mesh = new MeshManager({
@@ -16,10 +15,9 @@ describe('MeshManager', () => {
 
   describe('sendPrompt', () => {
     it('rejeita se peer não existe', async () => {
-      await assert.rejects(
-        () => mesh.sendPrompt('node-inexistente', 'oi'),
-        { message: /não encontrado/ }
-      );
+      await expect(
+        () => mesh.sendPrompt('node-inexistente', 'oi')
+      ).rejects.toThrow(/não encontrado/);
     });
 
     it('envia prompt via HTTP direto quando peer tem endpoint', async () => {
@@ -31,13 +29,13 @@ describe('MeshManager', () => {
       });
 
       // Mock fetch
-      mesh._fetch = async (url, opts) => {
-        assert.equal(url, 'http://fake:18800/api/message');
-        assert.equal(opts.method, 'POST');
-        assert.equal(opts.headers['Authorization'], 'Bearer tok123');
+      (mesh as any)._fetch = async (url: string, opts: any) => {
+        expect(url).toBe('http://fake:18800/api/message');
+        expect(opts.method).toBe('POST');
+        expect(opts.headers['Authorization']).toBe('Bearer tok123');
         const body = JSON.parse(opts.body);
-        assert.equal(body.text, 'Diga oi');
-        assert.equal(body.system_prompt, 'Voce e um bot');
+        expect(body.text).toBe('Diga oi');
+        expect(body.system_prompt).toBe('Voce e um bot');
         return {
           ok: true,
           json: async () => ({ response: 'Oi!', model: 'claude-haiku' }),
@@ -48,9 +46,9 @@ describe('MeshManager', () => {
         systemPrompt: 'Voce e um bot',
       });
 
-      assert.equal(result.method, 'http');
-      assert.equal(result.response, 'Oi!');
-      assert.equal(result.model, 'claude-haiku');
+      expect(result.method).toBe('http');
+      expect(result.response).toBe('Oi!');
+      expect(result.model).toBe('claude-haiku');
     });
 
     it('fallback para gateway-relay quando HTTP direto falha', async () => {
@@ -61,13 +59,13 @@ describe('MeshManager', () => {
       });
 
       // Mock fetch que falha
-      mesh._fetch = async () => { throw new Error('Connection refused'); };
+      (mesh as any)._fetch = async () => { throw new Error('Connection refused'); };
 
       // Mock callMcpTool (gateway relay)
-      mesh._callMcpTool = async (tool, args) => {
-        assert.equal(tool, 'run_command');
-        assert.ok(args.command.includes('curl'));
-        assert.ok(args.command.includes('http://fake:18800/api/message'));
+      (mesh as any)._callMcpTool = async (tool: string, args: any) => {
+        expect(tool).toBe('run_command');
+        expect(args.command).toMatch(/curl/);
+        expect(args.command).toMatch(/http:\/\/fake:18800\/api\/message/);
         return {
           content: [{
             type: 'text',
@@ -80,8 +78,8 @@ describe('MeshManager', () => {
       };
 
       const result = await mesh.sendPrompt('node-peer', 'oi');
-      assert.equal(result.method, 'gateway-relay');
-      assert.equal(result.response, 'Via relay!');
+      expect(result.method).toBe('gateway-relay');
+      expect(result.response).toBe('Via relay!');
     });
 
     it('emite evento prompt-response', async () => {
@@ -90,18 +88,18 @@ describe('MeshManager', () => {
         endpoint: 'http://fake:18800',
       });
 
-      mesh._fetch = async () => ({
+      (mesh as any)._fetch = async () => ({
         ok: true,
         json: async () => ({ response: 'OK', model: 'test' }),
       });
 
-      let emitted;
+      let emitted: any;
       mesh.on('prompt-response', (data) => { emitted = data; });
 
       await mesh.sendPrompt('node-peer', 'test');
-      assert.ok(emitted);
-      assert.equal(emitted.nodeId, 'node-peer');
-      assert.equal(emitted.method, 'http');
+      expect(emitted).toBeTruthy();
+      expect(emitted.nodeId).toBe('node-peer');
+      expect(emitted.method).toBe('http');
     });
 
     it('respeita timeout customizado', async () => {
@@ -110,24 +108,23 @@ describe('MeshManager', () => {
         endpoint: 'http://fake:18800',
       });
 
-      let capturedSignal;
-      mesh._fetch = async (url, opts) => {
+      let capturedSignal: any;
+      (mesh as any)._fetch = async (url: string, opts: any) => {
         capturedSignal = opts.signal;
         return { ok: true, json: async () => ({ response: 'ok', model: 'x' }) };
       };
 
       await mesh.sendPrompt('node-peer', 'test', { timeoutMs: 60000 });
       // AbortSignal.timeout was created — we just verify it didn't abort
-      assert.ok(capturedSignal);
+      expect(capturedSignal).toBeTruthy();
     });
 
     it('erro quando nenhuma rota disponível', async () => {
       mesh.registry.upsert('node-peer', { name: 'Peer' });
       // Sem endpoint, sem callMcpTool, sem router
-      await assert.rejects(
-        () => mesh.sendPrompt('node-peer', 'oi'),
-        { message: /sem rota disponível/ }
-      );
+      await expect(
+        () => mesh.sendPrompt('node-peer', 'oi')
+      ).rejects.toThrow(/sem rota disponível/);
     });
   });
 });

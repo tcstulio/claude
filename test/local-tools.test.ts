@@ -1,18 +1,17 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const path = require('node:path');
-const fs = require('node:fs');
-const os = require('node:os');
-const createLocalTools = require('../lib/local-tools');
-const Ledger = require('../lib/ledger/ledger');
-const receipt = require('../lib/ledger/receipt');
+import { describe, it, beforeEach, expect } from 'vitest';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import createLocalTools from '../lib-ts/local-tools.js';
+import { Ledger } from '../lib-ts/ledger/ledger.js';
+import { createReceipt } from '../lib-ts/ledger/receipt.js';
 
 describe('Local MCP Tools', () => {
-  let localTools;
-  let ledger;
-  let tmpDir;
+  let localTools: ReturnType<typeof createLocalTools>;
+  let ledger: InstanceType<typeof Ledger>;
+  let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'local-tools-test-'));
@@ -24,9 +23,9 @@ describe('Local MCP Tools', () => {
     it('retorna get_ledger e verify_receipt', () => {
       const tools = localTools.list();
       const names = tools.map(t => t.name);
-      assert.ok(names.includes('get_ledger'));
-      assert.ok(names.includes('verify_receipt'));
-      assert.ok(tools.every(t => t.description && t.inputSchema));
+      expect(names.includes('get_ledger')).toBeTruthy();
+      expect(names.includes('verify_receipt')).toBeTruthy();
+      expect(tools.every(t => t.description && t.inputSchema)).toBeTruthy();
     });
   });
 
@@ -34,20 +33,20 @@ describe('Local MCP Tools', () => {
     it('retorna summary por padrão', () => {
       const result = localTools.handle('get_ledger', {});
       const data = JSON.parse(result.content[0].text);
-      assert.equal(data.nodeId, 'agent_self');
-      assert.ok(data.balance);
-      assert.equal(data.balance.bootstrap, 100);
+      expect(data.nodeId).toBe('agent_self');
+      expect(data.balance).toBeTruthy();
+      expect(data.balance.bootstrap).toBe(100);
     });
 
     it('retorna balance', () => {
       const result = localTools.handle('get_ledger', { view: 'balance' });
       const data = JSON.parse(result.content[0].text);
-      assert.equal(data.credits, 100);
+      expect(data.credits).toBe(100);
     });
 
     it('retorna receipts com filtro', () => {
       // Adicionar receipt
-      const rcpt = receipt.createReceipt({
+      const rcpt = createReceipt({
         taskId: 't1', from: 'peer_a', to: 'agent_self',
         skill: 'chat', result: 'ok',
       });
@@ -56,12 +55,12 @@ describe('Local MCP Tools', () => {
 
       const result = localTools.handle('get_ledger', { view: 'receipts', peer: 'peer_a' });
       const data = JSON.parse(result.content[0].text);
-      assert.equal(data.length, 1);
-      assert.equal(data[0].taskId, 't1');
+      expect(data.length).toBe(1);
+      expect(data[0].taskId).toBe('t1');
     });
 
     it('summary com peer detail', () => {
-      const rcpt = receipt.createReceipt({
+      const rcpt = createReceipt({
         taskId: 't2', from: 'peer_b', to: 'agent_self',
         skill: 'code', result: 'done',
       });
@@ -70,27 +69,27 @@ describe('Local MCP Tools', () => {
 
       const result = localTools.handle('get_ledger', { peer: 'peer_b' });
       const data = JSON.parse(result.content[0].text);
-      assert.ok(data.peerDetail);
-      assert.equal(data.peerDetail.peerId, 'peer_b');
+      expect(data.peerDetail).toBeTruthy();
+      expect(data.peerDetail.peerId).toBe('peer_b');
     });
   });
 
   describe('verify_receipt', () => {
     it('verifica receipt válido', () => {
-      const rcpt = receipt.createReceipt({
+      const rcpt = createReceipt({
         taskId: 't3', from: 'a', to: 'b', skill: 'chat', result: 'ok',
       });
       // Sem assinatura — deve reportar erro
       const result = localTools.handle('verify_receipt', { receipt: rcpt });
       const data = JSON.parse(result.content[0].text);
-      assert.ok(!data.valid);
-      assert.ok(data.errors.some(e => e.includes('Nenhuma assinatura')));
+      expect(!data.valid).toBeTruthy();
+      expect(data.errors.some((e: string) => e.includes('Nenhuma assinatura'))).toBeTruthy();
     });
   });
 
   describe('handle()', () => {
     it('retorna null para tool inexistente', () => {
-      assert.equal(localTools.handle('nonexistent', {}), null);
+      expect(localTools.handle('nonexistent', {})).toBe(null);
     });
   });
 });

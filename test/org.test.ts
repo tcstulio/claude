@@ -1,16 +1,15 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const { Organization, ROLES, DEFAULT_POLICIES } = require('../lib/org/organization');
-const OrgRegistry = require('../lib/org/org-registry');
-const TrustGraph = require('../lib/mesh/trust');
+import { describe, it, beforeEach, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { Organization, ROLES, DEFAULT_POLICIES } from '../lib-ts/org/organization.js';
+import { OrgRegistry } from '../lib-ts/org/org-registry.js';
+import { TrustGraph } from '../lib-ts/mesh/trust.js';
 
 describe('Organization', () => {
-  let org;
+  let org: InstanceType<typeof Organization>;
 
   beforeEach(() => {
     org = new Organization({
@@ -21,16 +20,16 @@ describe('Organization', () => {
 
   describe('criação', () => {
     it('cria org com owner', () => {
-      assert.ok(org.id.startsWith('org_'));
-      assert.equal(org.name, 'Test Org');
-      assert.equal(org.createdBy, 'owner_1');
-      assert.ok(org.isMember('owner_1'));
-      assert.equal(org.getMembers('owner').length, 1);
+      expect(org.id.startsWith('org_')).toBeTruthy();
+      expect(org.name).toBe('Test Org');
+      expect(org.createdBy).toBe('owner_1');
+      expect(org.isMember('owner_1')).toBeTruthy();
+      expect(org.getMembers('owner').length).toBe(1);
     });
 
     it('políticas default', () => {
-      assert.equal(org.policies.minTrust, DEFAULT_POLICIES.minTrust);
-      assert.equal(org.policies.votingThreshold, 0.51);
+      expect(org.policies.minTrust).toBe(DEFAULT_POLICIES.minTrust);
+      expect(org.policies.votingThreshold).toBe(0.51);
     });
 
     it('políticas custom', () => {
@@ -38,60 +37,57 @@ describe('Organization', () => {
         name: 'Custom', createdBy: 'x',
         policies: { minTrust: 0.5, maxHops: 2 },
       });
-      assert.equal(custom.policies.minTrust, 0.5);
-      assert.equal(custom.policies.maxHops, 2);
+      expect(custom.policies.minTrust).toBe(0.5);
+      expect(custom.policies.maxHops).toBe(2);
     });
   });
 
   describe('invite + accept', () => {
     it('convida e aceita', () => {
       const result = org.invite('peer_a', 'owner_1', 'member');
-      assert.ok(result.invited);
-      assert.ok(result.pending);
+      expect(result.invited).toBeTruthy();
+      expect(result.pending).toBeTruthy();
 
       const accepted = org.acceptInvite('peer_a');
-      assert.ok(!accepted.pending);
-      assert.ok(org.isMember('peer_a'));
+      expect(!accepted.pending).toBeTruthy();
+      expect(org.isMember('peer_a')).toBeTruthy();
     });
 
     it('convite sem aprovação quando requireApproval=false', () => {
       org.policies.requireApproval = false;
       const result = org.invite('peer_b', 'owner_1');
-      assert.ok(result.invited);
-      assert.ok(!result.pending);
-      assert.ok(org.isMember('peer_b'));
+      expect(result.invited).toBeTruthy();
+      expect(!result.pending).toBeTruthy();
+      expect(org.isMember('peer_b')).toBeTruthy();
     });
 
     it('erro ao convidar membro existente', () => {
-      assert.throws(
+      expect(
         () => org.invite('owner_1', 'owner_1'),
-        { message: /já é membro/ },
-      );
+      ).toThrow(/already a member/);
     });
 
     it('membro não pode convidar', () => {
       org.policies.requireApproval = false;
       org.invite('peer_a', 'owner_1', 'member');
-      assert.throws(
+      expect(
         () => org.invite('peer_b', 'peer_a'),
-        { message: /Permissão negada/ },
-      );
+      ).toThrow(/Permission denied/);
     });
 
     it('só owner pode convidar owner', () => {
       org.policies.requireApproval = false;
       org.invite('admin_1', 'owner_1', 'admin');
-      assert.throws(
+      expect(
         () => org.invite('peer_b', 'admin_1', 'owner'),
-        { message: /Apenas owners/ },
-      );
+      ).toThrow(/Only owners/);
     });
 
     it('decline invite', () => {
       org.invite('peer_a', 'owner_1');
       org.declineInvite('peer_a');
-      assert.ok(!org.isMember('peer_a'));
-      assert.equal(org.getPendingInvites().length, 0);
+      expect(!org.isMember('peer_a')).toBeTruthy();
+      expect(org.getPendingInvites().length).toBe(0);
     });
   });
 
@@ -99,16 +95,15 @@ describe('Organization', () => {
     it('owner remove member', () => {
       org.policies.requireApproval = false;
       org.invite('peer_a', 'owner_1');
-      assert.ok(org.isMember('peer_a'));
+      expect(org.isMember('peer_a')).toBeTruthy();
       org.removeMember('peer_a', 'owner_1');
-      assert.ok(!org.isMember('peer_a'));
+      expect(!org.isMember('peer_a')).toBeTruthy();
     });
 
     it('não pode remover a si mesmo', () => {
-      assert.throws(
+      expect(
         () => org.removeMember('owner_1', 'owner_1'),
-        { message: /remover a si mesmo/ },
-      );
+      ).toThrow(/Cannot remove yourself/);
     });
   });
 
@@ -117,30 +112,28 @@ describe('Organization', () => {
       org.policies.requireApproval = false;
       org.invite('peer_a', 'owner_1');
       org.leave('peer_a');
-      assert.ok(!org.isMember('peer_a'));
+      expect(!org.isMember('peer_a')).toBeTruthy();
     });
 
     it('último owner não pode sair', () => {
-      assert.throws(
+      expect(
         () => org.leave('owner_1'),
-        { message: /Último owner/ },
-      );
+      ).toThrow(/Last owner/);
     });
   });
 
   describe('updatePolicies', () => {
     it('owner altera políticas', () => {
       const p = org.updatePolicies({ minTrust: 0.6 }, 'owner_1');
-      assert.equal(p.minTrust, 0.6);
+      expect(p.minTrust).toBe(0.6);
     });
 
     it('member não pode alterar', () => {
       org.policies.requireApproval = false;
       org.invite('peer_a', 'owner_1', 'member');
-      assert.throws(
+      expect(
         () => org.updatePolicies({}, 'peer_a'),
-        { message: /Permissão negada/ },
-      );
+      ).toThrow(/Permission denied/);
     });
   });
 
@@ -148,32 +141,34 @@ describe('Organization', () => {
     it('permite delegação entre membros com trust suficiente', () => {
       org.policies.requireApproval = false;
       org.invite('peer_a', 'owner_1');
-      assert.ok(org.canDelegate('owner_1', 'peer_a', 0.5));
+      expect(org.canDelegate('owner_1', 'peer_a', 0.5)).toBeTruthy();
     });
 
     it('bloqueia com trust baixo', () => {
       org.policies.requireApproval = false;
       org.invite('peer_a', 'owner_1');
-      assert.ok(!org.canDelegate('owner_1', 'peer_a', 0.1));
+      expect(!org.canDelegate('owner_1', 'peer_a', 0.1)).toBeTruthy();
     });
 
     it('bloqueia não-membros', () => {
-      assert.ok(!org.canDelegate('owner_1', 'outsider', 0.9));
+      expect(!org.canDelegate('owner_1', 'outsider', 0.9)).toBeTruthy();
     });
   });
 
   describe('toJSON', () => {
     it('serializa corretamente', () => {
       const json = org.toJSON();
-      assert.equal(json.name, 'Test Org');
-      assert.ok(json.members.length >= 1);
-      assert.ok(json.stats);
+      expect(json.name).toBe('Test Org');
+      expect(json.members.length >= 1).toBeTruthy();
+      expect(json.stats).toBeTruthy();
     });
   });
 });
 
 describe('OrgRegistry', () => {
-  let registry, trust, tmpDir;
+  let registry: InstanceType<typeof OrgRegistry>;
+  let trust: InstanceType<typeof TrustGraph>;
+  let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'org-test-'));
@@ -186,9 +181,9 @@ describe('OrgRegistry', () => {
   describe('create + get + list', () => {
     it('cria e recupera org', () => {
       const org = registry.create('Dev Team', 'self');
-      assert.ok(org.id);
-      assert.equal(registry.get(org.id).name, 'Dev Team');
-      assert.equal(registry.list().length, 1);
+      expect(org.id).toBeTruthy();
+      expect(registry.get(org.id).name).toBe('Dev Team');
+      expect(registry.list().length).toBe(1);
     });
 
     it('filtra por member', () => {
@@ -198,8 +193,8 @@ describe('OrgRegistry', () => {
       org1.policies.requireApproval = false;
       org1.invite('peer_a', 'self');
 
-      assert.equal(registry.list({ member: 'peer_a' }).length, 1);
-      assert.equal(registry.list({ member: 'peer_x' }).length, 1);
+      expect(registry.list({ member: 'peer_a' }).length).toBe(1);
+      expect(registry.list({ member: 'peer_x' }).length).toBe(1);
     });
   });
 
@@ -212,8 +207,8 @@ describe('OrgRegistry', () => {
 
       const rep = registry.getOrgReputation(org.id);
       // (0.8 + 0.6) / 2 = 0.7 (self não tem trust direto consigo)
-      assert.ok(rep > 0.6);
-      assert.ok(rep < 0.9);
+      expect(rep > 0.6).toBeTruthy();
+      expect(rep < 0.9).toBeTruthy();
     });
   });
 
@@ -225,12 +220,12 @@ describe('OrgRegistry', () => {
       org.invite('peer_b', 'self');
 
       const boost = registry.getTrustBoost('peer_a');
-      assert.ok(boost > 0);
-      assert.ok(boost <= 0.3);
+      expect(boost > 0).toBeTruthy();
+      expect(boost <= 0.3).toBeTruthy();
     });
 
     it('retorna 0 para não-membro', () => {
-      assert.equal(registry.getTrustBoost('unknown'), 0);
+      expect(registry.getTrustBoost('unknown')).toBe(0);
     });
   });
 
@@ -241,10 +236,10 @@ describe('OrgRegistry', () => {
       org.invite('peer_a', 'self');
 
       const info = registry.getPublicOrgInfo('peer_a');
-      assert.equal(info.length, 1);
-      assert.equal(info[0].orgName, 'Public Team');
-      assert.equal(info[0].role, 'member');
-      assert.ok(typeof info[0].reputation === 'number');
+      expect(info.length).toBe(1);
+      expect(info[0].orgName).toBe('Public Team');
+      expect(info[0].role).toBe('member');
+      expect(typeof info[0].reputation === 'number').toBeTruthy();
     });
   });
 
@@ -257,10 +252,10 @@ describe('OrgRegistry', () => {
 
       // Novo registry do mesmo dir
       const reg2 = new OrgRegistry({ dataDir: tmpDir, trust });
-      assert.equal(reg2.list().length, 1);
+      expect(reg2.list().length).toBe(1);
       const loaded = reg2.get(org.id);
-      assert.equal(loaded.name, 'Persistent');
-      assert.ok(loaded.isMember('peer_a'));
+      expect(loaded.name).toBe('Persistent');
+      expect(loaded.isMember('peer_a')).toBeTruthy();
     });
   });
 
@@ -268,15 +263,14 @@ describe('OrgRegistry', () => {
     it('owner remove org', () => {
       const org = registry.create('To Delete', 'self');
       registry.remove(org.id, 'self');
-      assert.equal(registry.list().length, 0);
+      expect(registry.list().length).toBe(0);
     });
 
     it('não-owner não pode remover', () => {
       const org = registry.create('Protected', 'self');
-      assert.throws(
+      expect(
         () => registry.remove(org.id, 'outsider'),
-        { message: /Permissão negada/ },
-      );
+      ).toThrow(/Permission denied/);
     });
   });
 });

@@ -1,12 +1,11 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const { CanaryRunner, CANARY_STATES } = require('../lib/infra/canary');
-const PeerRegistry = require('../lib/mesh/registry');
-const TrustGraph = require('../lib/mesh/trust');
+import { describe, it, beforeEach, expect } from 'vitest';
+import { CanaryRunner, CANARY_STATES } from '../lib-ts/infra/canary.js';
+import PeerRegistry from '../lib-ts/mesh/peer-registry.js';
+import { TrustGraph } from '../lib-ts/mesh/trust.js';
 
-function createMockMesh(peers = []) {
+function createMockMesh(peers: Array<{ nodeId: string; name: string; capabilities: string[]; status: string; trust?: number }> = []) {
   const registry = new PeerRegistry();
   const trust = new TrustGraph({ nodeId: 'self' });
 
@@ -19,8 +18,8 @@ function createMockMesh(peers = []) {
 }
 
 describe('CanaryRunner', () => {
-  let canary;
-  let mesh;
+  let canary: InstanceType<typeof CanaryRunner>;
+  let mesh: ReturnType<typeof createMockMesh>;
 
   beforeEach(() => {
     mesh = createMockMesh([
@@ -36,12 +35,12 @@ describe('CanaryRunner', () => {
 
   describe('CANARY_STATES', () => {
     it('contém todos os estados', () => {
-      assert.ok(CANARY_STATES.includes('pending'));
-      assert.ok(CANARY_STATES.includes('testing'));
-      assert.ok(CANARY_STATES.includes('passed'));
-      assert.ok(CANARY_STATES.includes('failed'));
-      assert.ok(CANARY_STATES.includes('promoting'));
-      assert.ok(CANARY_STATES.includes('done'));
+      expect(CANARY_STATES.includes('pending')).toBeTruthy();
+      expect(CANARY_STATES.includes('testing')).toBeTruthy();
+      expect(CANARY_STATES.includes('passed')).toBeTruthy();
+      expect(CANARY_STATES.includes('failed')).toBeTruthy();
+      expect(CANARY_STATES.includes('promoting')).toBeTruthy();
+      expect(CANARY_STATES.includes('done')).toBeTruthy();
     });
   });
 
@@ -53,11 +52,11 @@ describe('CanaryRunner', () => {
         branch: 'main',
       });
 
-      assert.ok(run.id.startsWith('canary_'));
-      assert.equal(run.version, '0.5.0');
-      assert.equal(run.executor.nodeId, 'compute_1'); // único com compute
-      assert.equal(run.state, 'provisioning');
-      assert.ok(run.script.commands.length > 0);
+      expect(run.id.startsWith('canary_')).toBeTruthy();
+      expect(run.version).toBe('0.5.0');
+      expect(run.executor.nodeId).toBe('compute_1'); // único com compute
+      expect(run.state).toBe('provisioning');
+      expect(run.script.commands.length > 0).toBeTruthy();
     });
 
     it('seleciona nó preferido se disponível', async () => {
@@ -72,7 +71,7 @@ describe('CanaryRunner', () => {
         preferNode: 'compute_2',
       });
 
-      assert.equal(run.executor.nodeId, 'compute_2');
+      expect(run.executor.nodeId).toBe('compute_2');
     });
 
     it('falha se nenhum nó compute disponível', async () => {
@@ -82,8 +81,8 @@ describe('CanaryRunner', () => {
       const c = new CanaryRunner({ mesh: meshNoCompute });
 
       const run = await c.start({ version: '0.5.0', repo: 'https://repo.git' });
-      assert.equal(run.state, 'failed');
-      assert.ok(run.results.error.includes('Nenhum nó'));
+      expect(run.state).toBe('failed');
+      expect(run.results.error.includes('No compute node')).toBeTruthy();
     });
 
     it('emite evento canary-created', async () => {
@@ -91,7 +90,7 @@ describe('CanaryRunner', () => {
       canary.on('canary-created', () => { emitted = true; });
 
       await canary.start({ version: '0.5.0', repo: 'https://repo.git' });
-      assert.ok(emitted);
+      expect(emitted).toBeTruthy();
     });
   });
 
@@ -101,7 +100,7 @@ describe('CanaryRunner', () => {
 
       // Mock SSH runner
       const mockSSH = {
-        executeMany: async (commands) => {
+        executeMany: async (commands: string[]) => {
           return commands.map(cmd => ({
             command: cmd,
             ok: true,
@@ -113,8 +112,8 @@ describe('CanaryRunner', () => {
       };
 
       const result = await canary.execute(run.id, mockSSH);
-      assert.ok(result.passed);
-      assert.equal(canary.getRun(run.id).state, 'passed');
+      expect(result.passed).toBeTruthy();
+      expect(canary.getRun(run.id).state).toBe('passed');
     });
 
     it('reporta falha quando teste falha', async () => {
@@ -129,8 +128,8 @@ describe('CanaryRunner', () => {
       };
 
       const result = await canary.execute(run.id, mockSSH);
-      assert.ok(!result.passed);
-      assert.equal(canary.getRun(run.id).state, 'failed');
+      expect(!result.passed).toBeTruthy();
+      expect(canary.getRun(run.id).state).toBe('failed');
     });
   });
 
@@ -140,34 +139,33 @@ describe('CanaryRunner', () => {
 
       // Simular teste passando
       const mockSSH = {
-        executeMany: async (cmds) => cmds.map(c => ({ command: c, ok: true, stdout: 'OK', stderr: '', durationMs: 10 })),
+        executeMany: async (cmds: string[]) => cmds.map(c => ({ command: c, ok: true, stdout: 'OK', stderr: '', durationMs: 10 })),
       };
       await canary.execute(run.id, mockSSH);
 
       const updated = canary.approve(run.id, true, 'Looks good');
-      assert.equal(updated.state, 'promoting');
-      assert.ok(updated.approval.approved);
+      expect(updated.state).toBe('promoting');
+      expect(updated.approval.approved).toBeTruthy();
     });
 
     it('rejeita promoção', async () => {
       const run = await canary.start({ version: '0.5.0', repo: 'https://repo.git' });
 
       const mockSSH = {
-        executeMany: async (cmds) => cmds.map(c => ({ command: c, ok: true, stdout: 'OK', stderr: '', durationMs: 10 })),
+        executeMany: async (cmds: string[]) => cmds.map(c => ({ command: c, ok: true, stdout: 'OK', stderr: '', durationMs: 10 })),
       };
       await canary.execute(run.id, mockSSH);
 
       const updated = canary.approve(run.id, false, 'Not ready');
-      assert.equal(updated.state, 'rejected');
+      expect(updated.state).toBe('rejected');
     });
 
     it('erro se run não está em passed', async () => {
       const run = await canary.start({ version: '0.5.0', repo: 'https://repo.git' });
 
-      assert.throws(
+      expect(
         () => canary.approve(run.id, true),
-        { message: /não está em estado 'passed'/ },
-      );
+      ).toThrow(/not in 'passed' state/);
     });
   });
 
@@ -176,8 +174,8 @@ describe('CanaryRunner', () => {
       await canary.start({ version: '0.4.0', repo: 'https://repo.git' });
       await canary.start({ version: '0.5.0', repo: 'https://repo.git' });
 
-      assert.equal(canary.listRuns().length, 2);
-      assert.equal(canary.listRuns({ state: 'provisioning' }).length, 2);
+      expect(canary.listRuns().length).toBe(2);
+      expect(canary.listRuns({ state: 'provisioning' }).length).toBe(2);
     });
   });
 
@@ -186,9 +184,9 @@ describe('CanaryRunner', () => {
       const run = await canary.start({ version: '0.5.0', repo: 'https://repo.git' });
 
       const current = canary.getRun(run.id);
-      assert.ok(current.timeline.length >= 2); // pending → provisioning
-      assert.equal(current.timeline[0].state, 'pending');
-      assert.equal(current.timeline[1].state, 'provisioning');
+      expect(current.timeline.length >= 2).toBeTruthy(); // pending → provisioning
+      expect(current.timeline[0].state).toBe('pending');
+      expect(current.timeline[1].state).toBe('provisioning');
     });
   });
 });

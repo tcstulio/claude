@@ -1,16 +1,15 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const { InfraScanner, KNOWN_SERVICES } = require('../lib/infra/scanner');
-const InfraAdopter = require('../lib/infra/adopt');
-const SSHTaskRunner = require('../lib/infra/ssh-task');
-const PeerRegistry = require('../lib/mesh/registry');
-const TrustGraph = require('../lib/mesh/trust');
+import { describe, it, beforeEach, expect } from 'vitest';
+import { InfraScanner, KNOWN_SERVICES } from '../lib-ts/infra/infra-scanner.js';
+import { InfraAdopter } from '../lib-ts/infra/infra-adopt.js';
+import { SSHTaskRunner } from '../lib-ts/infra/ssh-task.js';
+import PeerRegistry from '../lib-ts/mesh/peer-registry.js';
+import { TrustGraph } from '../lib-ts/mesh/trust.js';
 
 // Mock fetch para simular serviços de infra
-function createInfraFetch(services = {}) {
-  return async (url) => {
+function createInfraFetch(services: Record<string, unknown> = {}) {
+  return async (url: string) => {
     for (const [pattern, response] of Object.entries(services)) {
       if (url.includes(pattern)) {
         return {
@@ -36,11 +35,11 @@ describe('InfraScanner', () => {
       const proxmoxService = KNOWN_SERVICES.find(s => s.type === 'proxmox');
       const result = await scanner.probe('192.168.1.100', proxmoxService);
 
-      assert.ok(result);
-      assert.equal(result.type, 'proxmox');
-      assert.equal(result.ip, '192.168.1.100');
-      assert.equal(result.port, 8006);
-      assert.equal(result.version, '8.1.3');
+      expect(result).toBeTruthy();
+      expect(result.type).toBe('proxmox');
+      expect(result.ip).toBe('192.168.1.100');
+      expect(result.port).toBe(8006);
+      expect(result.version).toBe('8.1.3');
     });
 
     it('detecta Docker', async () => {
@@ -53,9 +52,9 @@ describe('InfraScanner', () => {
       const dockerService = KNOWN_SERVICES.find(s => s.type === 'docker');
       const result = await scanner.probe('10.0.0.5', dockerService);
 
-      assert.ok(result);
-      assert.equal(result.type, 'docker');
-      assert.equal(result.version, '24.0.7');
+      expect(result).toBeTruthy();
+      expect(result.type).toBe('docker');
+      expect(result.version).toBe('24.0.7');
     });
 
     it('detecta Tulipa agent', async () => {
@@ -68,8 +67,8 @@ describe('InfraScanner', () => {
       const tulipaService = KNOWN_SERVICES.find(s => s.type === 'tulipa');
       const result = await scanner.probe('192.168.1.50', tulipaService);
 
-      assert.ok(result);
-      assert.equal(result.type, 'tulipa');
+      expect(result).toBeTruthy();
+      expect(result.type).toBe('tulipa');
     });
 
     it('retorna null para host inacessível', async () => {
@@ -79,7 +78,7 @@ describe('InfraScanner', () => {
 
       const svc = KNOWN_SERVICES[0];
       const result = await scanner.probe('10.0.0.99', svc);
-      assert.equal(result, null);
+      expect(result).toBe(null);
     });
   });
 
@@ -93,10 +92,10 @@ describe('InfraScanner', () => {
       });
 
       const results = await scanner.scanHost('192.168.1.100');
-      assert.ok(results.length >= 2);
+      expect(results.length >= 2).toBeTruthy();
       const types = results.map(r => r.type);
-      assert.ok(types.includes('proxmox'));
-      assert.ok(types.includes('tulipa'));
+      expect(types.includes('proxmox')).toBeTruthy();
+      expect(types.includes('tulipa')).toBeTruthy();
     });
   });
 
@@ -109,32 +108,35 @@ describe('InfraScanner', () => {
       });
 
       const results = await scanner.scanEndpoints(['192.168.1.100:8006']);
-      assert.equal(results.length, 1);
-      assert.equal(results[0].type, 'proxmox');
+      expect(results.length).toBe(1);
+      expect(results[0].type).toBe('proxmox');
     });
   });
 
   describe('events', () => {
-    it('emite discovered ao encontrar serviço', (_, done) => {
-      const scanner = new InfraScanner({
-        fetch: createInfraFetch({
-          ':2375/version': { Version: '24.0', ApiVersion: '1.43' },
-        }),
-      });
+    it('emite discovered ao encontrar serviço', () =>
+      new Promise<void>((resolve) => {
+        const scanner = new InfraScanner({
+          fetch: createInfraFetch({
+            ':2375/version': { Version: '24.0', ApiVersion: '1.43' },
+          }),
+        });
 
-      scanner.on('discovered', (result) => {
-        assert.equal(result.type, 'docker');
-        done();
-      });
+        scanner.on('discovered', (result) => {
+          expect(result.type).toBe('docker');
+          resolve();
+        });
 
-      const svc = KNOWN_SERVICES.find(s => s.type === 'docker');
-      scanner.probe('10.0.0.1', svc);
-    });
+        const svc = KNOWN_SERVICES.find(s => s.type === 'docker');
+        scanner.probe('10.0.0.1', svc);
+      }));
   });
 });
 
 describe('InfraAdopter', () => {
-  let registry, trust, adopter;
+  let registry: InstanceType<typeof PeerRegistry>;
+  let trust: InstanceType<typeof TrustGraph>;
+  let adopter: InstanceType<typeof InfraAdopter>;
 
   beforeEach(() => {
     registry = new PeerRegistry();
@@ -152,16 +154,16 @@ describe('InfraAdopter', () => {
         version: '8.1',
       });
 
-      assert.ok(result.nodeId.startsWith('infra_proxmox_'));
-      assert.equal(result.status, 'adopted');
-      assert.ok(result.capabilities.some(c => c.name === 'proxmox-vm'));
-      assert.ok(result.capabilities.some(c => c.name === 'compute'));
+      expect(result.nodeId.startsWith('infra_proxmox_')).toBeTruthy();
+      expect(result.status).toBe('adopted');
+      expect(result.capabilities.some(c => c.name === 'proxmox-vm')).toBeTruthy();
+      expect(result.capabilities.some(c => c.name === 'compute')).toBeTruthy();
 
       // Verificar no registry
       const peer = registry.get(result.nodeId);
-      assert.ok(peer);
-      assert.ok(peer.metadata.isInfra);
-      assert.equal(peer.metadata.infraType, 'proxmox');
+      expect(peer).toBeTruthy();
+      expect(peer.metadata.isInfra).toBeTruthy();
+      expect(peer.metadata.infraType).toBe('proxmox');
     });
 
     it('define trust 0.7 para infra LAN', () => {
@@ -170,21 +172,22 @@ describe('InfraAdopter', () => {
         endpoint: 'http://10.0.0.5:2375', version: '24.0',
       });
 
-      assert.equal(trust.getDirectTrust(result.nodeId), 0.7);
+      expect(trust.getDirectTrust(result.nodeId)).toBe(0.7);
     });
 
-    it('emite evento adopted', (_, done) => {
-      adopter.on('adopted', ({ type, nodeId }) => {
-        assert.equal(type, 'docker');
-        assert.ok(nodeId);
-        done();
-      });
+    it('emite evento adopted', () =>
+      new Promise<void>((resolve) => {
+        adopter.on('adopted', ({ type, nodeId }) => {
+          expect(type).toBe('docker');
+          expect(nodeId).toBeTruthy();
+          resolve();
+        });
 
-      adopter.adopt({
-        type: 'docker', ip: '10.0.0.5', port: 2375,
-        endpoint: 'http://10.0.0.5:2375', version: '24.0',
-      });
-    });
+        adopter.adopt({
+          type: 'docker', ip: '10.0.0.5', port: 2375,
+          endpoint: 'http://10.0.0.5:2375', version: '24.0',
+        });
+      }));
   });
 
   describe('test', () => {
@@ -202,13 +205,13 @@ describe('InfraAdopter', () => {
       });
 
       const result = await adopter2.test(nodeId);
-      assert.ok(result.ok);
-      assert.ok(result.latency >= 0);
+      expect(result.ok).toBeTruthy();
+      expect(result.latency >= 0).toBeTruthy();
     });
 
     it('erro para serviço não adotado', async () => {
       const result = await adopter.test('inexistente');
-      assert.ok(!result.ok);
+      expect(!result.ok).toBeTruthy();
     });
   });
 
@@ -223,7 +226,7 @@ describe('InfraAdopter', () => {
         endpoint: 'https://10.0.0.2:8006', version: '8.1',
       });
 
-      assert.equal(adopter.list().length, 2);
+      expect(adopter.list().length).toBe(2);
     });
 
     it('remove serviço', () => {
@@ -233,8 +236,8 @@ describe('InfraAdopter', () => {
       });
 
       adopter.remove(nodeId);
-      assert.equal(adopter.list().length, 0);
-      assert.equal(registry.get(nodeId), null);
+      expect(adopter.list().length).toBe(0);
+      expect(registry.get(nodeId)).toBe(null);
     });
   });
 });
@@ -243,16 +246,16 @@ describe('SSHTaskRunner', () => {
   describe('_validateCommand', () => {
     it('bloqueia comandos perigosos', () => {
       const ssh = new SSHTaskRunner({ host: 'test' });
-      const result = ssh._validateCommand('rm -rf /');
-      assert.ok(!result.ok);
-      assert.ok(result.error.includes('bloqueado'));
+      const result = (ssh as any)._validate('rm -rf /');
+      expect(!result.ok).toBeTruthy();
+      expect(result.error.includes('Blocked')).toBeTruthy();
     });
 
     it('permite comandos normais', () => {
       const ssh = new SSHTaskRunner({ host: 'test' });
-      assert.ok(ssh._validateCommand('ls -la').ok);
-      assert.ok(ssh._validateCommand('df -h').ok);
-      assert.ok(ssh._validateCommand('docker ps').ok);
+      expect((ssh as any)._validate('ls -la').ok).toBeTruthy();
+      expect((ssh as any)._validate('df -h').ok).toBeTruthy();
+      expect((ssh as any)._validate('docker ps').ok).toBeTruthy();
     });
 
     it('allowlist restringe comandos', () => {
@@ -260,8 +263,8 @@ describe('SSHTaskRunner', () => {
         host: 'test',
         allowedCommands: ['ls', 'df', 'uptime'],
       });
-      assert.ok(ssh._validateCommand('ls -la').ok);
-      assert.ok(!ssh._validateCommand('rm file.txt').ok);
+      expect((ssh as any)._validate('ls -la').ok).toBeTruthy();
+      expect(!(ssh as any)._validate('rm file.txt').ok).toBeTruthy();
     });
   });
 
@@ -274,13 +277,13 @@ describe('SSHTaskRunner', () => {
         keyPath: '/home/user/.ssh/id_ed25519',
       });
 
-      const args = ssh._buildSSHArgs('uptime');
-      assert.ok(args.includes('-p'));
-      assert.ok(args.includes('2222'));
-      assert.ok(args.includes('-i'));
-      assert.ok(args.includes('/home/user/.ssh/id_ed25519'));
-      assert.ok(args.includes('admin@192.168.1.100'));
-      assert.ok(args.includes('uptime'));
+      const args = (ssh as any)._buildArgs('uptime');
+      expect(args.includes('-p')).toBeTruthy();
+      expect(args.includes('2222')).toBeTruthy();
+      expect(args.includes('-i')).toBeTruthy();
+      expect(args.includes('/home/user/.ssh/id_ed25519')).toBeTruthy();
+      expect(args.includes('admin@192.168.1.100')).toBeTruthy();
+      expect(args.includes('uptime')).toBeTruthy();
     });
   });
 
@@ -293,9 +296,9 @@ describe('SSHTaskRunner', () => {
       });
 
       const json = ssh.toJSON();
-      assert.equal(json.host, '10.0.0.1');
-      assert.equal(json.hasKey, true);
-      assert.ok(!json.keyPath); // não expõe path
+      expect(json.host).toBe('10.0.0.1');
+      expect(json.hasKey).toBe(true);
+      expect(!json.keyPath).toBeTruthy(); // não expõe path
     });
   });
 });

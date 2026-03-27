@@ -1,18 +1,20 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const path = require('node:path');
-const fs = require('node:fs');
-const os = require('node:os');
-const { generateDashboard, verifyAsThirdParty } = require('../lib/ledger/dashboard');
-const Ledger = require('../lib/ledger/ledger');
-const receipt = require('../lib/ledger/receipt');
-const TrustGraph = require('../lib/mesh/trust');
-const PeerRegistry = require('../lib/mesh/registry');
+import { describe, it, beforeEach, expect } from 'vitest';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import { generateDashboard, verifyAsThirdParty } from '../lib-ts/ledger/dashboard.js';
+import { Ledger } from '../lib-ts/ledger/ledger.js';
+import * as receipt from '../lib-ts/ledger/receipt.js';
+import { TrustGraph } from '../lib-ts/mesh/trust.js';
+import { PeerRegistry } from '../lib-ts/mesh/peer-registry.js';
 
 describe('Economy Dashboard', () => {
-  let ledger, trust, registry, tmpDir;
+  let ledger: InstanceType<typeof Ledger>;
+  let trust: InstanceType<typeof TrustGraph>;
+  let registry: InstanceType<typeof PeerRegistry>;
+  let tmpDir: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-test-'));
@@ -52,56 +54,56 @@ describe('Economy Dashboard', () => {
     it('retorna economia correta', () => {
       const dash = generateDashboard({ ledger, trust, registry, nodeId: 'self' });
 
-      assert.equal(dash.nodeId, 'self');
-      assert.ok(dash.timestamp);
-      assert.equal(dash.economy.spent, 3);  // 3 tasks pedidas (1 crédito cada)
-      assert.equal(dash.economy.earned, 4); // 2 tasks executadas (2 créditos cada: 1 base + 1 por 15s)
-      assert.equal(dash.economy.bootstrap, 100);
-      assert.equal(dash.economy.credits, 101); // 100 + 4 - 3
+      expect(dash.nodeId).toBe('self');
+      expect(dash.timestamp).toBeTruthy();
+      expect(dash.economy.spent).toBe(3);  // 3 tasks pedidas (1 crédito cada)
+      expect(dash.economy.earned).toBe(4); // 2 tasks executadas (2 créditos cada: 1 base + 1 por 15s)
+      expect(dash.economy.bootstrap).toBe(100);
+      expect(dash.economy.credits).toBe(101); // 100 + 4 - 3
     });
 
     it('top contributors correto', () => {
       const dash = generateDashboard({ ledger, trust, registry, nodeId: 'self' });
 
-      assert.equal(dash.activity.topContributors.length, 1);
-      assert.equal(dash.activity.topContributors[0].peerId, 'peer_a');
-      assert.equal(dash.activity.topContributors[0].tasksExecuted, 3);
-      assert.equal(dash.activity.topContributors[0].trust, 0.8);
+      expect(dash.activity.topContributors.length).toBe(1);
+      expect(dash.activity.topContributors[0].peerId).toBe('peer_a');
+      expect(dash.activity.topContributors[0].tasksExecuted).toBe(3);
+      expect(dash.activity.topContributors[0].trust).toBe(0.8);
     });
 
     it('top consumers correto', () => {
       const dash = generateDashboard({ ledger, trust, registry, nodeId: 'self' });
 
-      assert.equal(dash.activity.topConsumers.length, 1);
-      assert.equal(dash.activity.topConsumers[0].peerId, 'peer_b');
-      assert.equal(dash.activity.topConsumers[0].tasksRequested, 2);
+      expect(dash.activity.topConsumers.length).toBe(1);
+      expect(dash.activity.topConsumers[0].peerId).toBe('peer_b');
+      expect(dash.activity.topConsumers[0].tasksRequested).toBe(2);
     });
 
     it('top skills correto', () => {
       const dash = generateDashboard({ ledger, trust, registry, nodeId: 'self' });
 
-      assert.equal(dash.activity.topSkills.length, 2);
-      const chat = dash.activity.topSkills.find(s => s.skill === 'chat');
-      const code = dash.activity.topSkills.find(s => s.skill === 'code');
-      assert.equal(chat.count, 3);
-      assert.equal(chat.spent, 3);
-      assert.equal(code.count, 2);
-      assert.equal(code.earned, 2);
+      expect(dash.activity.topSkills.length).toBe(2);
+      const chat = dash.activity.topSkills.find((s: any) => s.skill === 'chat');
+      const code = dash.activity.topSkills.find((s: any) => s.skill === 'code');
+      expect(chat.count).toBe(3);
+      expect(chat.spent).toBe(3);
+      expect(code.count).toBe(2);
+      expect(code.earned).toBe(2);
     });
 
     it('network peers listados com trust', () => {
       const dash = generateDashboard({ ledger, trust, registry, nodeId: 'self' });
 
-      assert.equal(dash.network.totalPeers, 2);
-      const peerA = dash.network.peers.find(p => p.nodeId === 'peer_a');
-      assert.equal(peerA.trust, 0.8);
-      assert.equal(peerA.receipts, 3);
+      expect(dash.network.totalPeers).toBe(2);
+      const peerA = dash.network.peers.find((p: any) => p.nodeId === 'peer_a');
+      expect(peerA.trust).toBe(0.8);
+      expect(peerA.receipts).toBe(3);
     });
 
     it('funciona sem trust/registry (degradação graciosa)', () => {
       const dash = generateDashboard({ ledger, nodeId: 'self' });
-      assert.ok(dash.economy);
-      assert.equal(dash.network.totalPeers, 0);
+      expect(dash.economy).toBeTruthy();
+      expect(dash.network.totalPeers).toBe(0);
     });
   });
 
@@ -117,9 +119,9 @@ describe('Economy Dashboard', () => {
         receiptLib: receipt,
       });
 
-      assert.ok(result.dispute);
-      assert.ok(!result.valid);
-      assert.ok(result.recommendation.includes('incompleto'));
+      expect(result.dispute).toBeTruthy();
+      expect(result.valid).not.toBeTruthy();
+      expect(result.recommendation).toMatch(/incompleto/);
     });
 
     it('receipt com hash adulterado = disputa', () => {
@@ -135,8 +137,8 @@ describe('Economy Dashboard', () => {
         receiptLib: receipt,
       });
 
-      assert.ok(result.dispute);
-      assert.ok(!result.valid);
+      expect(result.dispute).toBeTruthy();
+      expect(result.valid).not.toBeTruthy();
     });
   });
 });

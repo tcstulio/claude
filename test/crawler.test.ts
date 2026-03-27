@@ -1,12 +1,11 @@
-'use strict';
+// © 2026 Tulio Silva — Tulipa Platform. Proprietary and confidential.
 
-const { describe, it, beforeEach } = require('node:test');
-const assert = require('node:assert/strict');
-const NetworkCrawler = require('../lib/mesh/crawler');
+import { describe, it, beforeEach, expect } from 'vitest';
+import { NetworkCrawler } from '../lib-ts/mesh/crawler.js';
 
 // Mock fetch que simula endpoints de peers
-function createMockFetch(network) {
-  return async (url) => {
+function createMockFetch(network: Record<string, any[]>) {
+  return async (url: string) => {
     const match = Object.entries(network).find(([endpoint]) =>
       url.startsWith(endpoint)
     );
@@ -35,8 +34,8 @@ describe('NetworkCrawler', () => {
       ];
 
       const result = await crawler.crawl(seeds);
-      assert.equal(result.total, 1);
-      assert.ok(result.peers.has('peer_a'));
+      expect(result.total).toBe(1);
+      expect(result.peers.has('peer_a')).toBeTruthy();
     });
 
     it('descobre peers de hop 1 (amigos dos seeds)', async () => {
@@ -55,10 +54,10 @@ describe('NetworkCrawler', () => {
       const seeds = [{ nodeId: 'peer_a', name: 'A', endpoint: 'http://a:3000' }];
       const result = await crawler.crawl(seeds);
 
-      assert.equal(result.total, 3); // a + b + c
-      assert.ok(result.peers.has('peer_b'));
-      assert.ok(result.peers.has('peer_c'));
-      assert.equal(result.peers.get('peer_b').discoveredVia, 'peer_a');
+      expect(result.total).toBe(3); // a + b + c
+      expect(result.peers.has('peer_b')).toBeTruthy();
+      expect(result.peers.has('peer_c')).toBeTruthy();
+      expect(result.peers.get('peer_b').discoveredVia).toBe('peer_a');
     });
 
     it('descobre peers de hop 2 (amigos dos amigos)', async () => {
@@ -79,8 +78,8 @@ describe('NetworkCrawler', () => {
       const seeds = [{ nodeId: 'peer_a', name: 'A', endpoint: 'http://a:3000' }];
       const result = await crawler.crawl(seeds);
 
-      assert.equal(result.total, 3); // a + b + c
-      assert.equal(result.peers.get('peer_c').discoveredAt, 2);
+      expect(result.total).toBe(3); // a + b + c
+      expect(result.peers.get('peer_c').discoveredAt).toBe(2);
     });
 
     it('respeita maxHops', async () => {
@@ -98,8 +97,8 @@ describe('NetworkCrawler', () => {
       const seeds = [{ nodeId: 'peer_a', name: 'A', endpoint: 'http://a:3000' }];
       const result = await crawler.crawl(seeds);
 
-      assert.ok(result.peers.has('peer_b'));
-      assert.ok(!result.peers.has('peer_c')); // hop 2 — não alcançado
+      expect(result.peers.has('peer_b')).toBeTruthy();
+      expect(result.peers.has('peer_c')).not.toBeTruthy(); // hop 2 — não alcançado
     });
 
     it('evita loops (visited set)', async () => {
@@ -117,8 +116,8 @@ describe('NetworkCrawler', () => {
       const seeds = [{ nodeId: 'peer_a', name: 'A', endpoint: 'http://a:3000' }];
       const result = await crawler.crawl(seeds);
 
-      assert.equal(result.total, 2); // só a + b, sem loop infinito
-      assert.equal(result.crawled, 2);
+      expect(result.total).toBe(2); // só a + b, sem loop infinito
+      expect(result.crawled).toBe(2);
     });
 
     it('lida com endpoints que falham', async () => {
@@ -132,8 +131,8 @@ describe('NetworkCrawler', () => {
       const seeds = [{ nodeId: 'peer_a', name: 'A', endpoint: 'http://a:3000' }];
       const result = await crawler.crawl(seeds);
 
-      assert.equal(result.total, 1); // só o seed
-      assert.ok(result.errors.length > 0);
+      expect(result.total).toBe(1); // só o seed
+      expect(result.errors.length > 0).toBeTruthy();
     });
   });
 
@@ -150,10 +149,10 @@ describe('NetworkCrawler', () => {
       const seeds = [{ nodeId: 'peer_a', name: 'A', endpoint: 'http://a:3000' }];
 
       const r1 = await crawler.crawl(seeds);
-      assert.ok(!r1.cached);
+      expect(r1.cached).not.toBeTruthy();
 
       const r2 = await crawler.crawl(seeds);
-      assert.ok(r2.cached);
+      expect(r2.cached).toBeTruthy();
     });
 
     it('force ignora cache', async () => {
@@ -168,7 +167,7 @@ describe('NetworkCrawler', () => {
       const seeds = [{ nodeId: 'peer_a', name: 'A', endpoint: 'http://a:3000' }];
       await crawler.crawl(seeds);
       const r2 = await crawler.crawl(seeds, { force: true });
-      assert.ok(!r2.cached);
+      expect(r2.cached).not.toBeTruthy();
     });
 
     it('invalidate limpa cache', async () => {
@@ -178,10 +177,10 @@ describe('NetworkCrawler', () => {
       });
 
       await crawler.crawl([{ nodeId: 'a', endpoint: 'http://a:3000' }]);
-      assert.ok(crawler.cacheInfo().cached);
+      expect(crawler.cacheInfo().cached).toBeTruthy();
 
       crawler.invalidate();
-      assert.ok(!crawler.cacheInfo().cached);
+      expect(crawler.cacheInfo().cached).not.toBeTruthy();
     });
   });
 });
