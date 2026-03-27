@@ -6,19 +6,24 @@ const WhatsAppTransport = require('./lib/transport/whatsapp');
 const TelegramTransport = require('./lib/transport/telegram');
 const EmailTransport = require('./lib/transport/email');
 const WebhookTransport = require('./lib/transport/webhook');
+const MessageQueue = require('./lib/queue');
 const Router = require('./lib/router');
 const MeshManager = require('./lib/mesh');
 const protocol = require('./lib/protocol');
-
-// ─── Fase 9-11: SQLite, Task Engine, Identity ─────────────────────────
-const Storage = require('./lib/storage');
-const MessageQueueSQLite = require('./lib/queue-sqlite');
-const TaskEngine = require('./lib/task-engine');
-const Identity = require('./lib/identity');
-
-// ─── Fase 12: Métricas e Terminal ─────────────────────────────────────
-const Metrics = require('./lib/metrics');
-const Terminal = require('./lib/terminal');
+const Ledger = require('./lib/ledger/ledger');
+const receiptLib = require('./lib/ledger/receipt');
+const createLocalTools = require('./lib/local-tools');
+const capabilitiesLib = require('./lib/capabilities');
+const platformDetector = require('./lib/platform-detector');
+const DataSourceRegistry = require('./lib/data-sources');
+const { requireScope, resolveScopes } = require('./lib/middleware/scope-guard');
+const { tokenFederation, introspectHandler } = require('./lib/middleware/token-federation');
+const { InfraScanner } = require('./lib/infra/scanner');
+const InfraAdopter = require('./lib/infra/adopt');
+const SSHTaskRunner = require('./lib/infra/ssh-task');
+const { CanaryRunner } = require('./lib/infra/canary');
+const { NetworkRoutes } = require('./lib/infra/network-routes');
+const OrgRegistry = require('./lib/org/org-registry');
 
 const app = express();
 
@@ -69,44 +74,36 @@ function rateLimit(req, res, next) {
 
   entry.count++;
 
-  if (entry.count > RATE_LIMIT_MAX) {
-    res.set('Retry-After', Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW - now) / 1000));
-    return res.status(429).json({ error: 'Rate limit excedido', retryAfter: Math.ceil((entry.windowStart + RATE_LIMIT_WINDOW - now) / 1000) });
+// Middleware de autenticação — requer Bearer token válido no request
+// Aceita: master token, peer tokens do registry, ou tokens federados via hub
+function requireAuth(req, res, next) {
+  const token = getRequestToken(req);
+  if (!token) {
+    return res.status(401).json({ error: 'Authorization required — envie header Authorization: Bearer <token>' });
   }
 
-  next();
+  // Master token = sempre OK
+  if (API_TOKEN && token === API_TOKEN) return next();
+
+  // Token federado (validado pelo middleware tokenFederation)
+  if (req.grantedScopes && req.grantedScopes.length > 0) return next();
+
+  // Se não tem API_TOKEN configurado, aceita qualquer token
+  if (!API_TOKEN) return next();
+
+  return res.status(403).json({ error: 'Token inválido' });
 }
 
-// Limpa IPs antigos a cada 5 min
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of rateLimitMap) {
-    if (now - entry.windowStart > RATE_LIMIT_WINDOW * 2) rateLimitMap.delete(ip);
-  }
-}, 5 * 60 * 1000);
+app.use(express.json());
+app.use(express.static('public'));
 
-// Rate limit em todas as rotas API
-app.use('/api', rateLimit);
+// ─── Helper: chama MCP tool no gateway (com retry para 502/503) ──────
+let _mcpCallId = 0;
+const MCP_MAX_RETRIES = 3;
+const MCP_RETRY_DELAYS = [2000, 4000, 8000]; // backoff exponencial
 
-// ─── Métricas e Terminal ──────────────────────────────────────────────
-const metrics = new Metrics({
-  collectInterval: parseInt(process.env.METRICS_INTERVAL || '30000', 10),
-  historySize: parseInt(process.env.METRICS_HISTORY || '360', 10),
-});
-const terminal = new Terminal();
-
-// Middleware: contabiliza requests HTTP nas métricas
-app.use((req, res, next) => {
-  metrics.trackHttpRequest();
-  next();
-});
-
-// ─── Autenticação do Dashboard ────────────────────────────────────────
-const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || process.env.TULIPA_TOKEN || '';
-
-function requireAuth(req, res, next) {
-  // Sem token configurado = modo dev (sem auth)
-  if (!DASHBOARD_TOKEN) return next();
+async function callMcpTool(tool, args = {}, req = null) {
+  let lastError;
 
   const auth = req.get('authorization') || '';
   const queryToken = req.query.token;
@@ -191,20 +188,11 @@ try {
     console.log('[storage] Construtor ok mas adapter null — fallback async');
     storage = null;
   }
-} catch (err) {
-  console.log(`[storage] Init sync falhou (${err.message}) — fallback async`);
-  storage = null;
+  throw lastError;
 }
 
-// ─── Inicializa Identity (Ed25519) ────────────────────────────────────
-const identity = new Identity({
-  nodeId: protocol.NODE_ID,
-  nodeName: protocol.NODE_NAME,
-});
-
 // ─── Inicializa Transport Layer ────────────────────────────────────────
-const queue = new MessageQueueSQLite({
-  storage,
+const queue = new MessageQueue({
   sendFn: async (item) => {
     await router.send(item.destination, item.message, { preferChannel: item.channel });
   },
@@ -237,59 +225,102 @@ if (telegram.configured) router.register(telegram);
 if (email.configured) router.register(email);
 if (webhook.configured) router.register(webhook);
 
+// ─── Ledger Layer ─────────────────────────────────────────────────────
+const ledger = new Ledger({
+  nodeId: protocol.NODE_ID,
+  dataDir: process.env.LEDGER_DIR || './data/ledger',
+});
+
 // ─── Mesh Layer ───────────────────────────────────────────────────────
 const mesh = new MeshManager({
   router,
   callMcpTool,
   fetch: proxyFetch,
+  ledger,
   discoveryInterval: parseInt(process.env.MESH_DISCOVERY_INTERVAL || '120000', 10),
   heartbeatInterval: parseInt(process.env.MESH_HEARTBEAT_INTERVAL || '60000', 10),
 });
 
+// ─── Infra Layer ──────────────────────────────────────────────────────
+const infraScanner = new InfraScanner({
+  fetch: proxyFetch,
+  subnets: (process.env.SCAN_SUBNETS || '192.168.1,192.168.15,10.0.0').split(','),
+  timeout: parseInt(process.env.SCAN_TIMEOUT || '3000', 10),
+});
+const infraAdopter = new InfraAdopter({
+  registry: mesh.registry,
+  trust: mesh.trust,
+  fetch: proxyFetch,
+});
+
+const networkRoutes = new NetworkRoutes({ fetch: proxyFetch });
+networkRoutes.detectLocalNetwork();
+console.log(`[routes] Rede local: ${JSON.stringify(networkRoutes._localInterfaces?.subnets || [])}`);
+
+infraScanner.on('discovered', (svc) => {
+  console.log(`[infra] Descoberto: ${svc.type} em ${svc.endpoint} (v${svc.version})`);
+});
+infraAdopter.on('adopted', ({ nodeId, type, endpoint }) => {
+  console.log(`[infra] Adotado: ${type} como ${nodeId} (${endpoint})`);
+});
+
+const canary = new CanaryRunner({
+  mesh,
+  ledger,
+  ownerNode: process.env.OWNER_NODE || null,
+  notify: async (nodeId, message) => {
+    console.log(`[canary] Notificação: ${message}`);
+    // Se WhatsApp configurado, enviar alerta
+    if (process.env.ALERT_PHONE) {
+      try { await callMcpTool('send_whatsapp', { to: process.env.ALERT_PHONE, message }); } catch {}
+    }
+  },
+});
+
+// ─── Org Layer ────────────────────────────────────────────────────────
+const orgRegistry = new OrgRegistry({
+  dataDir: process.env.LEDGER_DIR || './data',
+  trust: mesh.trust,
+});
+
+// ─── Scope Resolution (popula req.grantedScopes) ─────────────────────
+app.use(resolveScopes({
+  resolveToken: getRequestToken,
+  masterToken: API_TOKEN,
+  mesh,
+}));
+
+// ─── Token Federation (auth federada via hub) ────────────────────────
+// Se token não é local, pergunta ao hub se é válido (com cache)
+app.use(tokenFederation({
+  getRequestToken,
+  masterToken: API_TOKEN,
+  mesh,
+  fetch: proxyFetch,
+  hubEndpoints: process.env.HUB_ENDPOINTS
+    ? process.env.HUB_ENDPOINTS.split(',')
+    : (process.env.GATEWAY_URL ? [process.env.GATEWAY_URL] : []),
+}));
+
+// ─── Local MCP Tools ──────────────────────────────────────────────────
+const localTools = createLocalTools({ ledger, mesh, protocol });
+
 mesh.on('peer-joined', (peer) => {
   console.log(`[mesh] Novo peer: ${peer.name} — canais: ${peer.channels.join(', ') || 'nenhum'}`);
-  if (storage) storage.upsertPeer(peer);
 });
 mesh.on('peer-left', (peer) => {
   console.log(`[mesh] Peer saiu: ${peer.name}`);
 });
 
-// ─── Task Engine ────────────────────────────────────────────────────
-const taskEngine = new TaskEngine({
-  storage,
-  mesh,
-  callMcpTool,
-  maxConcurrent: parseInt(process.env.TASK_MAX_CONCURRENT || '5', 10),
-});
-
-// Handler: enviar mensagem via router
-taskEngine.registerHandler('send_message', async (task) => {
-  const { destination, message, channel } = task.input;
-  return router.send(destination, message, { preferChannel: channel });
-});
-
-// Handler: chamar MCP tool
-taskEngine.registerHandler('mcp_call', async (task) => {
-  const { tool, args } = task.input;
-  return callMcpTool(tool, args);
-});
-
-// Handler genérico (echo)
-taskEngine.registerHandler('generic', async (task) => {
-  return { received: task.description, input: task.input };
-});
-
-// Log de eventos do router + tracking de métricas
+// Log de eventos do router
 router.on('sent', ({ channel, destination }) => {
   console.log(`[router] Enviado via ${channel} para ${destination}`);
-  metrics.trackMessage(true);
 });
 router.on('queued', ({ destination, id }) => {
   console.log(`[router] Enfileirado ${id} para ${destination}`);
 });
 router.on('channel-failed', ({ channel, error }) => {
   console.log(`[router] Canal ${channel} falhou: ${error}`);
-  metrics.trackMessage(false);
 });
 
 // ─── Monitor / Watchdog ────────────────────────────────────────────────
@@ -432,6 +463,16 @@ async function runHealthCheck() {
 }
 
 // ─── Endpoints ─────────────────────────────────────────────────────────
+
+// Build info (público, para verificar versão deployada)
+app.get('/api/build-info', (_req, res) => {
+  try {
+    const info = require('./build-info.json');
+    res.json(info);
+  } catch {
+    res.json({ version: 'unknown', error: 'build-info.json não encontrado' });
+  }
+});
 
 // Monitor
 app.get('/api/monitor', (_req, res) => {
@@ -715,6 +756,793 @@ app.post('/api/mesh/send/:nodeId', requireAuth, async (req, res) => {
   }
 });
 
+// Enviar prompt para um peer (o peer processa via Claude e retorna resposta)
+app.post('/api/mesh/prompt/:nodeId', requireAuth, async (req, res) => {
+  try {
+    const { prompt, text, system_prompt, model, timeout } = req.body;
+    const promptText = prompt || text;
+    if (!promptText) return res.status(400).json({ error: 'Campo "prompt" ou "text" é obrigatório' });
+    const result = await mesh.sendPrompt(req.params.nodeId, promptText, {
+      systemPrompt: system_prompt,
+      model,
+      timeoutMs: timeout || 30000,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(502).json({ error: 'Prompt falhou', detail: err.message });
+  }
+});
+
+// Solicitar admin token de um peer (para gerenciamento remoto)
+app.post('/api/mesh/admin-token/:nodeId', requireAuth, async (req, res) => {
+  try {
+    const { admin_token } = req.body;
+    const result = await mesh.requestAdminToken(req.params.nodeId, {
+      adminToken: admin_token,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(502).json({ error: 'Falha ao obter admin token', detail: err.message });
+  }
+});
+
+// ─── Network / Trust Routes (Sprint 6) ────────────────────────────────
+
+// Lista pública de peers — sem tokens, sem auth. Para crawlers de outros nós.
+app.get('/api/network/peers/public', (_req, res) => {
+  res.json({ peers: mesh.getPublicPeerList() });
+});
+
+// Trust graph do nó
+app.get('/api/network/trust', requireAuth, (_req, res) => {
+  res.json(mesh.trust.toJSON());
+});
+
+// Ranking de delegação por skill
+app.get('/api/network/rank/:skill', requireAuth, (req, res) => {
+  const eligibleOnly = req.query.all !== 'true';
+  const ranking = mesh.queryBySkill(req.params.skill, { eligibleOnly });
+  res.json({ skill: req.params.skill, ranking });
+});
+
+// Crawl da rede (BFS)
+app.post('/api/network/crawl', requireAuth, async (_req, res) => {
+  try {
+    const result = await mesh.crawlNetwork({ force: true });
+    res.json({
+      ok: true,
+      total: result.total,
+      crawled: result.crawled,
+      hops: result.hops,
+      errors: result.errors,
+      cached: result.cached || false,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Crawler cache info
+app.get('/api/network/crawl', (_req, res) => {
+  res.json(mesh.crawler.cacheInfo());
+});
+
+// ─── Hub Council Routes ───────────────────────────────────────────────
+
+// Estado do hub neste nó
+app.get('/api/hub/status', (_req, res) => {
+  res.json({
+    nodeId: protocol.NODE_ID,
+    nodeName: protocol.NODE_NAME,
+    ...mesh.hubRole.toJSON(),
+  });
+});
+
+// Registry de todos os hubs conhecidos
+app.get('/api/hub/registry', (_req, res) => {
+  res.json(mesh.hubRegistry.toJSON());
+});
+
+// Council — propostas pendentes e histórico
+app.get('/api/hub/council', requireAuth, (_req, res) => {
+  res.json(mesh.hubCouncil.toJSON());
+});
+
+// Propor promoção/demoção
+app.post('/api/hub/propose', requireAuth, (req, res) => {
+  const { type, targetNodeId, reason } = req.body;
+  if (!type || !targetNodeId) {
+    return res.status(400).json({ error: 'Campos "type" e "targetNodeId" são obrigatórios' });
+  }
+  try {
+    const proposal = mesh.hubCouncil.propose(type, targetNodeId, reason || '');
+    res.json({ ok: true, proposal });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Votar em proposta
+app.post('/api/hub/vote', requireAuth, (req, res) => {
+  const { proposalId, vote, reason } = req.body;
+  if (!proposalId || !vote) {
+    return res.status(400).json({ error: 'Campos "proposalId" e "vote" são obrigatórios' });
+  }
+  try {
+    const result = mesh.hubCouncil.vote(proposalId, protocol.NODE_ID, vote, reason);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Forçar análise LLM do advisor
+app.post('/api/hub/evaluate', requireAuth, async (_req, res) => {
+  try {
+    const result = await mesh.hubAdvisor.analyze();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Último resultado da análise do advisor
+app.get('/api/hub/advisor', (_req, res) => {
+  res.json(mesh.hubAdvisor.toJSON());
+});
+
+// Receber heartbeat de outro hub (hub-to-hub, sem auth pesado)
+app.post('/api/hub/heartbeat', (req, res) => {
+  const { nodeId, metrics } = req.body;
+  if (!nodeId) return res.status(400).json({ error: 'nodeId required' });
+  const hub = mesh.hubRegistry.processHeartbeat(nodeId, metrics);
+  res.json({ ok: true, hub });
+});
+
+// Receber sync de registry (hub-to-hub)
+app.post('/api/hub/sync', (req, res) => {
+  const { hubs, epoch } = req.body;
+  if (!hubs) return res.status(400).json({ error: 'hubs required' });
+  const updated = mesh.hubRegistry.applySync(hubs, epoch);
+  res.json({ ok: true, updated, localEpoch: mesh.hubRegistry._epoch });
+});
+
+// Receber proposta/voto de eleição (hub-to-hub)
+app.post('/api/hub/election', (req, res) => {
+  try {
+    const result = mesh.hubCouncil.receiveProposal(req.body);
+    res.json({ ok: true, result });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Avaliação da rede (diagnóstico)
+app.get('/api/hub/network-eval', requireAuth, (_req, res) => {
+  res.json(mesh.hubCouncil.evaluateNetwork());
+});
+
+// ─── Federation Routes (Sprint 7) ─────────────────────────────────────
+
+// Busca federada por skill na rede
+app.post('/api/network/query', async (req, res) => {
+  const { skill, queryId, hopsRemaining, originNode } = req.body;
+  if (!skill) return res.status(400).json({ error: 'Campo "skill" é obrigatório' });
+
+  try {
+    const result = await mesh.federation.query(skill, { queryId, hopsRemaining, originNode });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Token Introspection — peers perguntam se um token é válido aqui
+// Não requer auth (qualquer peer pode perguntar)
+app.post('/api/network/introspect', introspectHandler({
+  masterToken: API_TOKEN,
+  mesh,
+}));
+
+// Relay de task via este hub
+app.post('/api/network/relay', requireAuth, async (req, res) => {
+  const { targetNodeId, prompt, skill, originNode } = req.body;
+  if (!targetNodeId || !prompt) {
+    return res.status(400).json({ error: 'Campos "targetNodeId" e "prompt" são obrigatórios' });
+  }
+
+  try {
+    const result = await mesh.sendPrompt(targetNodeId, prompt, { skill });
+    res.json({
+      ok: true,
+      relayedVia: protocol.NODE_ID,
+      originNode,
+      targetNodeId,
+      response: result.response,
+      model: result.model,
+      method: result.method,
+    });
+  } catch (err) {
+    res.status(502).json({ error: `Relay falhou: ${err.message}` });
+  }
+});
+
+// Estatísticas da federação (rate limits, queries recentes)
+app.get('/api/network/federation', (_req, res) => {
+  res.json(mesh.federation.stats());
+});
+
+// ─── Capabilities Routes (Sprint 3) ───────────────────────────────────
+
+// Capabilities deste nó (env + auto-detecção de plataforma)
+const platformInfo = platformDetector.detect();
+const dataSourceRegistry = new DataSourceRegistry(platformInfo);
+const NODE_CAPABILITIES = [...new Set([
+  ...(process.env.NODE_CAPABILITIES || 'chat,monitoring,deploy,relay').split(',').map(s => s.trim()),
+  ...platformInfo.tools,
+  ...platformInfo.dataSources.map(ds => ds.name),
+])].filter(Boolean);
+
+// Injeta info de plataforma no mesh para ANNOUNCE
+mesh.setPlatformInfo(platformInfo, dataSourceRegistry);
+
+// GET /api/infra — público, sem auth. O que este nó oferece em infra.
+app.get('/api/infra', (_req, res) => {
+  const infra = capabilitiesLib.filterByCategory(NODE_CAPABILITIES, 'infra');
+  res.json({
+    nodeId: protocol.NODE_ID,
+    nodeName: protocol.NODE_NAME,
+    category: 'infra',
+    capabilities: capabilitiesLib.enrich(infra),
+    peers: mesh.registry.online().map(p => ({
+      nodeId: p.nodeId,
+      name: p.name,
+      infra: capabilitiesLib.filterByCategory(p.capabilities, 'infra'),
+    })),
+  });
+});
+
+// GET /api/knowledge — catálogo completo, filtrado por scopes do requester.
+app.get('/api/knowledge', requireAuth, (req, res) => {
+  const scopes = req.grantedScopes || [];
+  const accessible = capabilitiesLib.accessibleCapabilities(NODE_CAPABILITIES, scopes);
+
+  res.json({
+    nodeId: protocol.NODE_ID,
+    nodeName: protocol.NODE_NAME,
+    grantedScopes: scopes,
+    capabilities: capabilitiesLib.enrich(accessible),
+    restricted: NODE_CAPABILITIES.filter(c => !accessible.includes(c)).map(c => ({
+      name: c,
+      category: capabilitiesLib.classify(c),
+      scope: capabilitiesLib.requiredScope(c),
+      reason: 'Scope não autorizado',
+    })),
+    peers: mesh.registry.online().map(p => ({
+      nodeId: p.nodeId,
+      name: p.name,
+      capabilities: capabilitiesLib.enrich(
+        capabilitiesLib.accessibleCapabilities(p.capabilities, scopes)
+      ),
+    })),
+  });
+});
+
+// GET /api/capabilities — classificação de todas as capabilities conhecidas
+app.get('/api/capabilities', (_req, res) => {
+  res.json({
+    node: capabilitiesLib.enrich(NODE_CAPABILITIES),
+    known: capabilitiesLib.KNOWN_CAPABILITIES,
+    scopes: capabilitiesLib.DATA_SCOPES,
+  });
+});
+
+// ─── Platform & Data Sources Routes ──────────────────────────────────
+
+// GET /api/platform — info da plataforma detectada neste nó
+app.get('/api/platform', (_req, res) => {
+  res.json({
+    nodeId: protocol.NODE_ID,
+    nodeName: protocol.NODE_NAME,
+    ...platformInfo,
+    capabilities: NODE_CAPABILITIES,
+  });
+});
+
+// GET /api/data-sources — fontes de dados disponíveis neste nó e na rede
+app.get('/api/data-sources', (_req, res) => {
+  res.json({
+    nodeId: protocol.NODE_ID,
+    nodeName: protocol.NODE_NAME,
+    local: dataSourceRegistry.toJSON(),
+    network: mesh.registry.online().map(p => ({
+      nodeId: p.nodeId,
+      name: p.name,
+      platform: p.platform,
+      dataSources: p.dataSources || [],
+    })).filter(p => p.dataSources.length > 0),
+  });
+});
+
+// GET /api/data-sources/:name — quem oferece um data source específico na rede
+app.get('/api/data-sources/:name', (_req, res) => {
+  const name = _req.params.name;
+  const localSource = dataSourceRegistry.get(name);
+  const networkPeers = mesh.registry.list({ dataSource: name });
+
+  res.json({
+    source: name,
+    local: localSource || null,
+    network: networkPeers.map(p => ({
+      nodeId: p.nodeId,
+      name: p.name,
+      platform: p.platform,
+      status: p.status,
+    })),
+    totalProviders: (localSource ? 1 : 0) + networkPeers.length,
+  });
+});
+
+// GET /api/network/route/:intent — roteamento inteligente por intent
+app.get('/api/network/route/:intent', (_req, res) => {
+  const intent = _req.params.intent;
+  const result = mesh.querySmartRoute(intent);
+
+  res.json({
+    intent,
+    ...result,
+    localPlatform: platformInfo.platform,
+    localHas: NODE_CAPABILITIES.includes(intent) || dataSourceRegistry.has(intent),
+  });
+});
+
+// GET /api/network/platforms — visão de todas as plataformas na rede
+app.get('/api/network/platforms', (_req, res) => {
+  const peers = mesh.registry.online();
+  const platforms = {};
+
+  for (const p of peers) {
+    const plat = p.platform || 'unknown';
+    if (!platforms[plat]) platforms[plat] = [];
+    platforms[plat].push({
+      nodeId: p.nodeId,
+      name: p.name,
+      capabilities: p.capabilities,
+      dataSources: p.dataSources,
+    });
+  }
+
+  // Inclui este nó
+  const selfPlat = platformInfo.platform;
+  if (!platforms[selfPlat]) platforms[selfPlat] = [];
+  platforms[selfPlat].unshift({
+    nodeId: protocol.NODE_ID,
+    name: protocol.NODE_NAME,
+    capabilities: NODE_CAPABILITIES,
+    dataSources: dataSourceRegistry.toAnnounce(),
+    self: true,
+  });
+
+  res.json({ platforms });
+});
+
+// ─── Local MCP Tools Routes ───────────────────────────────────────────
+
+// Listar tools locais disponíveis
+app.get('/api/local-tools', (req, res) => {
+  res.json({ tools: localTools.list() });
+});
+
+// Chamar tool local via JSON-RPC 2.0 (mesma interface do gateway /mcp)
+app.post('/api/local-mcp', (req, res) => {
+  const { jsonrpc, method, id, params } = req.body;
+  if (jsonrpc !== '2.0' || method !== 'tools/call') {
+    return res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
+  }
+
+  const result = localTools.handle(params?.name, params?.arguments || {});
+  if (!result) {
+    return res.json({ jsonrpc: '2.0', id, error: { code: -32602, message: `Tool '${params?.name}' não encontrada` } });
+  }
+
+  res.json({ jsonrpc: '2.0', id, result });
+});
+
+// ─── Network Routes (multi-path routing) ─────────────────────────────
+
+// Ver rede local detectada e todas as rotas
+app.get('/api/routes', requireAuth, (_req, res) => {
+  res.json(networkRoutes.toJSON());
+});
+
+// Registrar rotas para um peer
+app.post('/api/routes/:nodeId', requireAuth, (req, res) => {
+  const { routes, auto } = req.body;
+  if (auto) {
+    // Auto-detectar rotas a partir de info do peer
+    const detected = networkRoutes.autoRegister(req.params.nodeId, req.body);
+    return res.json({ nodeId: req.params.nodeId, routes: detected });
+  }
+  if (!routes || !Array.isArray(routes)) {
+    return res.status(400).json({ error: 'Campo "routes" (array) é obrigatório' });
+  }
+  networkRoutes.setRoutes(req.params.nodeId, routes);
+  res.json({ ok: true, routes: networkRoutes.getRoutes(req.params.nodeId) });
+});
+
+// Resolver melhor rota para um peer
+app.get('/api/routes/:nodeId/resolve', requireAuth, async (req, res) => {
+  const force = req.query.force === 'true';
+  const result = await networkRoutes.resolve(req.params.nodeId, { force });
+  if (!result) return res.status(404).json({ error: 'Nenhuma rota funcional encontrada' });
+  res.json(result);
+});
+
+// Testar todas as rotas de um peer
+app.post('/api/routes/:nodeId/test', requireAuth, async (req, res) => {
+  const results = await networkRoutes.testAll(req.params.nodeId);
+  res.json({ nodeId: req.params.nodeId, results });
+});
+
+// ─── Infra Routes (Sprint 4) ──────────────────────────────────────────
+
+// Scan de endpoints específicos
+app.post('/api/infra/scan', requireAuth, async (req, res) => {
+  const { endpoints, subnets } = req.body;
+  try {
+    let results;
+    if (endpoints && endpoints.length > 0) {
+      results = await infraScanner.scanEndpoints(endpoints);
+    } else {
+      results = await infraScanner.scanSubnets({ subnets });
+    }
+    res.json({ found: results.length, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Scan de um host específico
+app.post('/api/infra/scan/:ip', requireAuth, async (req, res) => {
+  try {
+    const results = await infraScanner.scanHost(req.params.ip);
+    res.json({ ip: req.params.ip, found: results.length, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Último scan realizado
+app.get('/api/infra/scan', (_req, res) => {
+  res.json(infraScanner.getLastScan() || { message: 'Nenhum scan realizado' });
+});
+
+// Adotar serviço descoberto
+app.post('/api/infra/adopt', requireAuth, (req, res) => {
+  const { discovered, credentials } = req.body;
+  if (!discovered || !discovered.type || !discovered.endpoint) {
+    return res.status(400).json({ error: 'Campo "discovered" com type e endpoint é obrigatório' });
+  }
+
+  try {
+    const result = infraAdopter.adopt(discovered, credentials);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Listar serviços adotados
+app.get('/api/infra/adopted', requireAuth, (_req, res) => {
+  res.json({ services: infraAdopter.list() });
+});
+
+// Testar conectividade de serviço adotado
+app.post('/api/infra/test/:nodeId', requireAuth, async (req, res) => {
+  try {
+    const result = await infraAdopter.test(req.params.nodeId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Remover serviço adotado
+app.delete('/api/infra/adopted/:nodeId', requireAuth, (req, res) => {
+  infraAdopter.remove(req.params.nodeId);
+  res.json({ ok: true, removed: req.params.nodeId });
+});
+
+// Executar comando SSH via task
+app.post('/api/infra/ssh/:nodeId', requireAuth, async (req, res) => {
+  const { command, commands } = req.body;
+  const peer = mesh.registry.get(req.params.nodeId);
+  if (!peer?.metadata?.isInfra) {
+    return res.status(404).json({ error: 'Peer não é um serviço de infra adotado' });
+  }
+
+  const ssh = new SSHTaskRunner({
+    host: peer.metadata.ip,
+    port: peer.metadata.port === 22 ? 22 : undefined,
+    user: req.body.user || 'root',
+    keyPath: req.body.keyPath,
+    timeout: req.body.timeout,
+  });
+
+  try {
+    if (commands && Array.isArray(commands)) {
+      const results = await ssh.executeMany(commands, { stopOnError: req.body.stopOnError });
+      res.json({ results });
+    } else if (command) {
+      const result = await ssh.execute(command);
+      res.json(result);
+    } else {
+      res.status(400).json({ error: 'Campo "command" ou "commands" é obrigatório' });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Org Routes (Sprint 9) ────────────────────────────────────────────
+
+// Criar org
+app.post('/api/org', requireAuth, (req, res) => {
+  const { name, policies } = req.body;
+  if (!name) return res.status(400).json({ error: 'Campo "name" é obrigatório' });
+
+  const createdBy = req.peer?.nodeId || protocol.NODE_ID;
+  const org = orgRegistry.create(name, createdBy, policies);
+  orgRegistry.save();
+  res.json(org.toJSON());
+});
+
+// Listar orgs (opcionalmente filtrar por member)
+app.get('/api/org', requireAuth, (req, res) => {
+  const orgs = orgRegistry.list({ member: req.query.member });
+  res.json({ orgs: orgs.map(o => o.toJSON()) });
+});
+
+// Detalhes de uma org
+app.get('/api/org/:orgId', requireAuth, (req, res) => {
+  const org = orgRegistry.get(req.params.orgId);
+  if (!org) return res.status(404).json({ error: 'Org não encontrada' });
+  res.json({
+    ...org.toJSON(),
+    reputation: orgRegistry.getOrgReputation(org.id),
+  });
+});
+
+// Convidar membro
+app.post('/api/org/:orgId/invite', requireAuth, (req, res) => {
+  const { nodeId, role } = req.body;
+  if (!nodeId) return res.status(400).json({ error: 'Campo "nodeId" é obrigatório' });
+
+  const org = orgRegistry.get(req.params.orgId);
+  if (!org) return res.status(404).json({ error: 'Org não encontrada' });
+
+  try {
+    const invitedBy = req.peer?.nodeId || protocol.NODE_ID;
+    const result = org.invite(nodeId, invitedBy, role);
+    orgRegistry.save();
+    res.json(result);
+  } catch (err) {
+    res.status(403).json({ error: err.message });
+  }
+});
+
+// Aceitar convite
+app.post('/api/org/:orgId/accept', requireAuth, (req, res) => {
+  const org = orgRegistry.get(req.params.orgId);
+  if (!org) return res.status(404).json({ error: 'Org não encontrada' });
+
+  try {
+    const nodeId = req.body.nodeId || req.peer?.nodeId || protocol.NODE_ID;
+    const result = org.acceptInvite(nodeId);
+    orgRegistry.save();
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Atualizar políticas
+app.put('/api/org/:orgId/policies', requireAuth, (req, res) => {
+  const org = orgRegistry.get(req.params.orgId);
+  if (!org) return res.status(404).json({ error: 'Org não encontrada' });
+
+  try {
+    const changedBy = req.peer?.nodeId || protocol.NODE_ID;
+    const policies = org.updatePolicies(req.body, changedBy);
+    orgRegistry.save();
+    res.json({ policies });
+  } catch (err) {
+    res.status(403).json({ error: err.message });
+  }
+});
+
+// Remover membro
+app.delete('/api/org/:orgId/member/:nodeId', requireAuth, (req, res) => {
+  const org = orgRegistry.get(req.params.orgId);
+  if (!org) return res.status(404).json({ error: 'Org não encontrada' });
+
+  try {
+    const removedBy = req.peer?.nodeId || protocol.NODE_ID;
+    org.removeMember(req.params.nodeId, removedBy);
+    orgRegistry.save();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(403).json({ error: err.message });
+  }
+});
+
+// Reputação cross-hub de um agente
+app.get('/api/org/reputation/:nodeId', (_req, res) => {
+  const boost = orgRegistry.getTrustBoost(_req.params.nodeId);
+  const orgs = orgRegistry.getPublicOrgInfo(_req.params.nodeId);
+  res.json({ nodeId: _req.params.nodeId, trustBoost: boost, orgs });
+});
+
+// Deletar org
+app.delete('/api/org/:orgId', requireAuth, (req, res) => {
+  try {
+    const removedBy = req.peer?.nodeId || protocol.NODE_ID;
+    orgRegistry.remove(req.params.orgId, removedBy);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(403).json({ error: err.message });
+  }
+});
+
+// ─── Canary Routes (Sprint 5) ─────────────────────────────────────────
+
+// Iniciar canary test
+app.post('/api/canary/start', requireAuth, async (req, res) => {
+  const { version, repo, branch, testCommands, preferNode } = req.body;
+  if (!version || !repo) {
+    return res.status(400).json({ error: 'Campos "version" e "repo" são obrigatórios' });
+  }
+
+  try {
+    const run = await canary.start({ version, repo, branch, testCommands, preferNode });
+    res.json(run);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Status de um canary run
+app.get('/api/canary/:runId', requireAuth, (req, res) => {
+  const run = canary.getRun(req.params.runId);
+  if (!run) return res.status(404).json({ error: 'Run não encontrado' });
+  res.json(run);
+});
+
+// Listar canary runs
+app.get('/api/canary', requireAuth, (req, res) => {
+  const runs = canary.listRuns({ state: req.query.state, version: req.query.version });
+  res.json({ runs });
+});
+
+// Aprovar ou rejeitar promoção
+app.post('/api/canary/:runId/approve', requireAuth, (req, res) => {
+  const { approved, reason } = req.body;
+  if (typeof approved !== 'boolean') {
+    return res.status(400).json({ error: 'Campo "approved" (boolean) é obrigatório' });
+  }
+
+  try {
+    const run = canary.approve(req.params.runId, approved, reason);
+    res.json(run);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── Economy Dashboard (Sprint 8) ─────────────────────────────────────
+const { generateDashboard, verifyAsThirdParty } = require('./lib/ledger/dashboard');
+
+// Dashboard consolidado: saldo, top contribuidores, skills, peers
+app.get('/api/economy/dashboard', requireAuth, (_req, res) => {
+  const data = generateDashboard({
+    ledger,
+    trust: mesh.trust,
+    registry: mesh.registry,
+    nodeId: protocol.NODE_ID,
+  });
+  res.json(data);
+});
+
+// Verificação de receipt como terceiro (disputas)
+app.post('/api/economy/dispute', requireAuth, (req, res) => {
+  const { receipt: rcpt } = req.body;
+  if (!rcpt) return res.status(400).json({ error: 'Campo "receipt" é obrigatório' });
+
+  const result = verifyAsThirdParty(rcpt, {
+    registry: mesh.registry,
+    receiptLib,
+  });
+  res.json(result);
+});
+
+// Ranking econômico dos peers (trust × reputation × saldo)
+app.get('/api/economy/ranking', requireAuth, (req, res) => {
+  const skill = req.query.skill;
+  const peers = skill
+    ? mesh.registry.list({ capability: skill })
+    : mesh.registry.list();
+
+  const ranking = mesh.trust.rankForDelegation(peers, {
+    skill,
+    ledger,
+  });
+  res.json({ skill: skill || 'all', ranking });
+});
+
+// ─── Ledger Routes ────────────────────────────────────────────────────
+
+// Resumo do ledger (saldo, totais, por skill/peer)
+app.get('/api/ledger', (req, res) => {
+  res.json(ledger.getSummary());
+});
+
+// Saldo atual
+app.get('/api/ledger/balance', (req, res) => {
+  res.json(ledger.getBalance());
+});
+
+// Listar receipts (com filtros: ?peer=X&skill=Y&since=Z&limit=N)
+app.get('/api/ledger/receipts', (req, res) => {
+  const receipts = ledger.getReceipts({
+    peer: req.query.peer,
+    skill: req.query.skill,
+    since: req.query.since,
+    limit: req.query.limit ? parseInt(req.query.limit, 10) : undefined,
+  });
+  res.json({ count: receipts.length, receipts });
+});
+
+// Verificar um receipt (aceita receipt no body + public keys opcionais)
+app.post('/api/ledger/verify', (req, res) => {
+  const { receipt: rcpt, fromPublicKey, toPublicKey } = req.body;
+  if (!rcpt) return res.status(400).json({ error: 'Campo "receipt" é obrigatório' });
+
+  // Tenta buscar public keys do registry se não fornecidas
+  const fromKey = fromPublicKey || mesh.registry.get(rcpt.from)?.metadata?.publicKey;
+  const toKey = toPublicKey || mesh.registry.get(rcpt.to)?.metadata?.publicKey;
+
+  const result = receiptLib.verifyReceipt(rcpt, { fromPublicKey: fromKey, toPublicKey: toKey });
+  res.json(result);
+});
+
+// Saldo com um peer específico
+app.get('/api/ledger/peer/:nodeId', (req, res) => {
+  const balance = ledger.getPeerBalance(req.params.nodeId);
+  const receipts = ledger.getReceipts({ peer: req.params.nodeId });
+  res.json({
+    peerId: req.params.nodeId,
+    balance,
+    receipts: receipts.length,
+    recent: receipts.slice(-5),
+  });
+});
+
+// Registrar ou atualizar endpoint de um peer
+app.post('/api/mesh/peers/:nodeId', (req, res) => {
+  try {
+    const { endpoint, name, capabilities, channels } = req.body;
+    const info = {};
+    if (endpoint) info.endpoint = endpoint;
+    if (name) info.name = name;
+    if (capabilities) info.capabilities = capabilities;
+    if (channels) info.channels = channels;
+    const peer = mesh.registry.upsert(req.params.nodeId, info);
+    res.json({ ok: true, peer });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Receber mensagem de outro peer (endpoint P2P)
 app.post('/api/mesh/incoming', (req, res) => {
   try {
@@ -828,18 +1656,14 @@ app.delete('/api/services/:nodeId', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// Sweep: marca offline após 5 min, DELETA após 30 min sem heartbeat
+// Sweep: marca como offline nós sem heartbeat há mais de 5 min
 const SERVICE_STALE_MS = 5 * 60 * 1000;
-const SERVICE_DEAD_MS = 30 * 60 * 1000;
 setInterval(() => {
   const now = Date.now();
   for (const [nodeId, entry] of serviceRegistry) {
     if (nodeId === protocol.NODE_ID) continue; // não limpa a si mesmo
     const age = now - new Date(entry.lastHeartbeat).getTime();
-    if (age > SERVICE_DEAD_MS) {
-      serviceRegistry.delete(nodeId);
-      console.log(`[registry] Nó ${entry.name || nodeId} removido (inativo há ${Math.round(age / 60000)}min)`);
-    } else if (age > SERVICE_STALE_MS) {
+    if (age > SERVICE_STALE_MS) {
       entry.status = 'offline';
     }
   }
@@ -1241,18 +2065,8 @@ function startMonitor() {
   }, 10000);
 }
 
-async function startServer() {
-  // Se storage não foi inicializado sync (sem better-sqlite3), init async via sql.js
-  if (!storage) {
-    storage = await Storage.create();
-    // Injeta storage nos componentes que foram criados antes
-    queue.setStorage(storage);
-    taskEngine._storage = storage;
-    console.log(`[storage] Inicializado async via sql.js`);
-  }
-
-  app.listen(PORT, () => {
-  console.log(`\nTulipa API v6.0 — SQLite + Tasks + Identity + Mesh + Metrics + Terminal`);
+app.listen(PORT, () => {
+  console.log(`\nTulipa API v0.4.0 — Multi-Channel + Mesh + Ledger`);
   console.log(`Dashboard: http://localhost:${PORT}/`);
   console.log(`Gateway: ${GATEWAY_URL}`);
   console.log(`Node: ${protocol.NODE_ID} (${protocol.NODE_NAME})`);
@@ -1307,6 +2121,7 @@ async function startServer() {
   console.log('  POST /api/mesh/discover       — forçar discovery');
   console.log('  POST /api/mesh/ping/:nodeId   — ping peer');
   console.log('  POST /api/mesh/send/:nodeId   — enviar para peer');
+  console.log('  POST /api/mesh/prompt/:nodeId — enviar prompt a peer (Claude P2P)');
   console.log('  POST /api/mesh/incoming       — receber de peer (P2P)');
   console.log('  POST /api/mesh/heartbeat      — pingar todos');
 
@@ -1367,28 +2182,6 @@ async function startServer() {
     console.error(`[mesh] Falha ao iniciar: ${err.message}`);
   });
 
-  // Inicia task engine
-  taskEngine.start();
-
   startMonitor();
-  queue.start(15000); // 15s (antes era 5s — desnecessariamente agressivo)
-  metrics.start();
-  terminal.isAvailable().then(ok => {
-    console.log(`[terminal] tmux: ${ok ? 'disponível' : 'não detectado'}`);
-  });
-
-  // Log audit de startup
-  if (storage && storage._adapter) {
-    storage.log('system.startup', protocol.NODE_ID, null, {
-      version: '6.0',
-      transports: [...router._transports.keys()],
-      fingerprint: identity.fingerprint,
-    });
-  }
-  });
-}
-
-startServer().catch(err => {
-  console.error(`[startup] Falha ao iniciar: ${err.message}`);
-  process.exit(1);
+  queue.start(5000);
 });

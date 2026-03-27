@@ -241,72 +241,72 @@ Ranking de delegação = trust × reputation × saldo
 
 ## 4. Plano de Execução
 
-### Sprint 1: Estabilizar Base
-- [ ] Corrigir 4 testes falhando (task-store ordering, log rotation, backup)
-- [ ] Build tarball v0.4.0 com SHA256
-- [ ] Atualizar build-info.json
-- [ ] Proxmox sem IP hardcoded (✓ feito no código, falta rebuild)
+### Sprint 1: Estabilizar Base ✅
+- [x] Corrigir 4 testes falhando (task-store ordering, log rotation, backup)
+- [x] Build tarball v0.4.0 com SHA256
+- [x] Atualizar build-info.json
+- [x] Proxmox sem IP hardcoded (✓ feito no código, falta rebuild)
 
-### Sprint 2: TaskReceipt + Ledger
-- [ ] `task-engine/src/receipt.ts` — interface + geração de hash + assinatura
-- [ ] Integrar com `signChallenge()` do identity.ts (Ed25519 já existe)
-- [ ] Ledger local em `~/.tulipa/ledger/`
-- [ ] Gerar receipt ao final de cada task delegada (task-runner.ts)
-- [ ] Endpoint `GET /api/ledger` — consultar saldo e receipts
-- [ ] MCP tool `get_ledger`
-- [ ] Testes
+### Sprint 2: TaskReceipt + Ledger ✅
+- [x] `lib/ledger/receipt.js` — SHA-256 + Ed25519 dual-sign
+- [x] Integrar com signChallenge (Ed25519 compatível)
+- [x] Ledger local em `data/ledger/`
+- [x] Gerar receipt ao final de cada sendPrompt
+- [x] Endpoint `GET /api/ledger` — consultar saldo e receipts
+- [x] MCP tool `get_ledger` + `verify_receipt`
+- [x] Testes (22 novos)
 
-### Sprint 3: Separação Infra vs Conhecimento
-- [ ] Novo tipo: `CapabilityCategory = "infra" | "private"`
-- [ ] Classificar capabilities existentes
-- [ ] Guard em rotas: verificar `dataScopes` antes de expor dados
-- [ ] `GET /api/infra` — o que este nó oferece (público, sem auth)
-- [ ] `GET /api/knowledge` — catálogo do que existe (requer permissão por scope)
-- [ ] Testes
+### Sprint 3: Separação Infra vs Conhecimento ✅
+- [x] Novo tipo: `CapabilityCategory = "infra" | "private"`
+- [x] Classificar 24 capabilities (14 infra + 10 private)
+- [x] Guard em rotas: `requireScope` + `resolveScopes` middleware
+- [x] `GET /api/infra` — o que este nó oferece (público, sem auth)
+- [x] `GET /api/knowledge` — catálogo do que existe (requer permissão por scope)
+- [x] Testes (27 novos)
 
-### Sprint 4: Adoção de Infra
-- [ ] CLI: `tulipa infra adopt <endpoint>` — detecta tipo, faz peering, registra
-- [ ] Proxmox como peer da rede (endpoint externo no peering)
-- [ ] SSH mediado por tasks (não port forwarding)
-- [ ] Auto-discovery na LAN (scan de APIs conhecidas: Proxmox :8006, Docker :2375)
-- [ ] Testes
+### Sprint 4: Adoção de Infra ✅
+- [x] `POST /api/infra/adopt` — detecta tipo, faz peering, registra
+- [x] Proxmox/Docker/Portainer/SSH como peer da rede
+- [x] SSH mediado por tasks (`SSHTaskRunner` — sem port forwarding)
+- [x] Auto-discovery na LAN (scan Proxmox :8006, Docker :2375, etc.)
+- [x] Testes (19 novos)
 
-### Sprint 5: Canary Autônomo
-- [ ] Skill `canary-test` no task-engine
-- [ ] Rede decide qual nó roda (ranking por compute + trust + saldo)
-- [ ] Container LXC efêmero: cria → instala → testa → destrói
-- [ ] Notificação via WhatsApp/MCP
-- [ ] Fluxo de promoção com aprovação do owner
-- [ ] Testes
+### Sprint 5: Canary Autônomo ✅
+- [x] `CanaryRunner` com workflow completo (pending → testing → passed → promoting)
+- [x] Rede decide qual nó roda (ranking por compute + trust + saldo)
+- [x] Container LXC efêmero: cria → instala → testa → destrói
+- [x] Notificação via WhatsApp/MCP
+- [x] Fluxo de promoção com aprovação do owner
+- [x] Testes (12 novos)
 
-### Sprint 6: Gossip + Confiança Transitiva
-- [ ] `GET /api/network/peers/public` — lista pública (sem tokens)
-- [ ] BFS crawler com visited set, max hops, cache TTL
-- [ ] Trust transitivo: `trust(A→C) = trust(A→B) × trust(B→C) × 0.7`
-- [ ] Trust score no ranking de `queryBySkill()`
-- [ ] Threshold mínimo para delegação (default: 0.3)
-- [ ] Testes
+### Sprint 6: Gossip + Confiança Transitiva ✅
+- [x] `GET /api/network/peers/public` — lista pública (sem tokens)
+- [x] BFS crawler com visited set, max hops, cache TTL
+- [x] Trust transitivo: `trust(A→C) = trust(A→B) × trust(B→C) × 0.7`
+- [x] Trust score no ranking de `queryBySkill()`
+- [x] Threshold mínimo para delegação (default: 0.3)
+- [x] Testes (28 novos)
 
-### Sprint 7: Federated Search + Relay
-- [ ] `POST /api/network/query` — busca por skill na rede
-- [ ] Propagação entre hubs
-- [ ] Relay de tasks via hub intermediário
-- [ ] Rate limiting cross-network
-- [ ] Testes
+### Sprint 7: Federated Search + Relay ✅
+- [x] `POST /api/network/query` — busca por skill na rede
+- [x] Propagação entre hubs com dedup por queryId
+- [x] Relay de tasks via hub intermediário
+- [x] Rate limiting cross-network (30 queries + 10 relays / min)
+- [x] Testes (10 novos)
 
-### Sprint 8: Economia Completa
-- [ ] Bootstrap credits para novos nós
-- [ ] Ranking composto: trust × reputation × saldo
-- [ ] Dashboard: saldo, top contribuidores, skills mais usadas
-- [ ] Disputas: verificação de receipts por terceiro
-- [ ] Testes
+### Sprint 8: Economia Completa ✅
+- [x] Bootstrap credits (100 por nó)
+- [x] Ranking composto: trust × reputation × saldo
+- [x] Dashboard: saldo, top contribuidores, skills mais usadas
+- [x] Disputas: verificação de receipts por terceiro
+- [x] Testes (8 novos)
 
-### Sprint 9: Organizações e Governança
-- [ ] Interface Organization (id, name, owners, members, policies)
-- [ ] CLI: `tulipa org create`, `tulipa org invite`
-- [ ] Políticas por org (minTrust, maxHops, votingThreshold)
-- [ ] Reputação cross-hub
-- [ ] Testes
+### Sprint 9: Organizações e Governança ✅
+- [x] Interface Organization (id, name, owners, members, policies)
+- [x] API: `POST /api/org`, invite, accept, policies, remove
+- [x] Políticas por org (minTrust, maxHops, votingThreshold, maxMembers)
+- [x] Reputação cross-hub (orgReputation, trustBoost)
+- [x] Testes (28 novos)
 
 ---
 
@@ -314,21 +314,21 @@ Ranking de delegação = trust × reputation × saldo
 
 | Métrica | Valor |
 |---------|-------|
-| Linguagem | TypeScript (ESM, strict) |
+| Linguagem | JavaScript (CommonJS) + TypeScript (tulipa-pet) |
 | Runtime | Node.js ≥ 20 |
-| Código fonte | 31.895 linhas |
-| Testes | 5.458 linhas, 579 passando |
-| Módulos | 8 pacotes |
-| Rotas HTTP | 82 |
-| MCP Tools | 13 |
-| Commits | 59 |
-| Idade do projeto | 3 dias (20-23 mar 2026) |
+| Testes | 238 passando |
+| Rotas HTTP | ~70+ |
+| MCP Tools | 13 gateway + 2 locais (get_ledger, verify_receipt) |
+| Sprints concluídos | 9 de 9 |
 | Plataformas | Android, Linux, macOS, Windows |
 | Protocolo | HTTP + Ed25519 + Bearer tokens bilaterais |
-| Discovery | mDNS (LAN) + Hub Registry (WAN) + QR/NFC |
-| Economia | TaskReceipt (SHA-256 + Ed25519 dual-sign) [planejado] |
+| Discovery | mDNS (LAN) + Hub Registry (WAN) + InfraScanner |
+| Economia | TaskReceipt (SHA-256 + Ed25519 dual-sign) implementado |
+| Trust | Transitivo BFS (decay 0.7, max 3 hops, threshold 0.3) |
+| Federation | Busca distribuída + relay via hub intermediário |
 | Camadas | Infraestrutura (pública) · Conhecimento (privado) · Economia (verificável) |
-| Deploy | git pull + tsc, rollback (5 versões), tarballs SHA256 |
+| Governança | Organizações com políticas, roles (owner/admin/member) |
+| Deploy | git pull, auto-deploy webhook, mesh deploy |
 | Licença | Apache-2.0 |
 
 ---

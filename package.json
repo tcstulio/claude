@@ -1,12 +1,17 @@
 {
   "name": "tulipa-api",
-  "version": "1.0.0",
+  "version": "0.4.0",
   "description": "Proxy API REST para o gateway Tulipa MCP",
+  "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test test/*.test.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
     "test:manual": "./test/manual.sh"
   },
   "dependencies": {
@@ -16,5 +21,11 @@
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.8.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.5.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.1"
   }
 }

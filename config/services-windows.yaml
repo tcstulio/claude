@@ -1,0 +1,78 @@
+# Tulipa Supervisor — Configuracao de servicos (Windows)
+# Para: Servidor 2070 (agent_cd1454ae-dcaa-4aaf-a203-022625a37765)
+# Plataforma: Windows (win32 x64) / Node v24+
+#
+# Uso: copiar para ~/.tulipa/services.yaml no Servidor 2070
+# Iniciar: node bin/tulipa.js up
+
+supervisor:
+  log_dir: ~/.tulipa/logs
+  max_log_size_mb: 10
+  log_rotate_count: 5
+  notify_admin: true
+  ipc_socket: ~/.tulipa/supervisor.sock
+
+services:
+  gateway:
+    name: API Gateway
+    cwd: ~/tulipa/gateway
+    command: node dist/index.js
+    autostart: true
+    autorestart: true
+    restart_delay_ms: 5000
+    max_restarts: 10
+    restart_window_ms: 300000
+    health:
+      type: http
+      url: http://localhost:18800/api/health
+      interval_ms: 30000
+      timeout_ms: 5000
+      retries: 3
+    log_file: ~/.tulipa/logs/gateway.log
+
+  whatsapp-bridge:
+    name: WhatsApp Bridge
+    cwd: ~/tulipa
+    command: node bin/tulipa.js whatsapp --self-chat
+    autostart: true
+    autorestart: true
+    restart_delay_ms: 5000
+    max_restarts: 10
+    restart_window_ms: 300000
+    health:
+      type: port
+      port: 18790
+      interval_ms: 30000
+      timeout_ms: 5000
+      retries: 3
+    log_file: ~/.tulipa/logs/whatsapp-bridge.log
+
+backup:
+  enabled: true
+  schedule_hours: 24
+  keep_count: 7
+  backup_dir: ~/.tulipa/backups
+  targets:
+    - path: ~/.tulipa/whatsapp-auth
+      name: whatsapp-auth
+    - path: ~/.tulipa/whatsapp-contacts.yaml
+      name: whatsapp-contacts
+    - path: ~/.tulipa/whatsapp-history
+      name: whatsapp-history
+    - path: ~/.tulipa/inference.json
+      name: inference-config
+    - path: ~/.tulipa/api-tokens.yaml
+      name: api-tokens
+
+deploy:
+  repo_dir: ~/tulipa
+  pre_deploy: git stash
+  deploy_command: git pull origin main
+  post_deploy: cd tulipa-core && npx tsc && cd ../whatsapp-bridge && npx tsc && cd ../termux-shell && npx tsc && cd ../rtc && npx tsc && cd ../supervisor && npx tsc && cd ../gateway && npx tsc
+  rollback_keep: 3
+
+diagnostics:
+  enabled: true
+  max_log_lines: 200
+  claude_timeout_ms: 120000
+  auto_fix: false
