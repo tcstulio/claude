@@ -4,9 +4,9 @@
 **Contato:** tcstulio@gmail.com
 **Versão:** 0.4.0
 **Data de início:** 20 de março de 2026
-**Repositório:** github.com/tcstulio/tulipa (privado)
+**Repositório:** github.com/tcstulio/claude
 **Hub:** https://agent.coolgroove.com.br
-**Registro:** 23 de março de 2026
+**Atualizado:** 2 de abril de 2026
 
 ---
 
@@ -25,25 +25,26 @@ Três princípios:
 
 ## 2. Estado Atual — O que Existe
 
-### 2.1 Código
+### 2.1 Código (tulipa-api)
 
-| Módulo | Linhas src | Linhas test | Função |
-|--------|-----------|------------|--------|
-| **whatsapp-bridge/** | 11.375 | 2.336 | Baileys, media, contacts, profiles, histórico, dossier |
-| **gateway/** | 6.918 | 660 | HTTP puro, 82 rotas, MCP (13 tools), auth, audit |
-| **tulipa-core/** | 5.020 | 730 | CLI (30+ cmds), setup wizard, blueprints, onboarding |
-| **network/** | 2.609 | 338 | Ed25519 identity, peering 3-step, mDNS, registry, proxy |
-| **task-engine/** | 1.996 | 738 | Decomposição, runner paralelo, delegation |
-| **supervisor/** | 1.428 | 656 | Process manager, health, backup, deploy, rollback |
-| **rtc/** | 1.551 | 0 | WebRTC virtual camera, signaling |
-| **termux-shell/** | 998 | 0 | Android/Termux, sensores, sandbox |
-| **Total** | **31.895** | **5.458** | **37.353 linhas TypeScript** |
+| Módulo | Arquivos | Função |
+|--------|----------|--------|
+| **handlers/** | 11 .ts | Rotas HTTP: core, mesh, transport, hub, infra, org, deploy, logs |
+| **mesh/** | 9 .ts | MeshManager, federation, crawler, hub-council, log-query |
+| **transport/** | 4 .ts | WhatsApp, Telegram, Email, Webhook |
+| **ledger/** | 3 .ts | TaskReceipt, Ledger, Dashboard |
+| **infra/** | 4 .ts | Scanner, Adopter, Canary, NetworkRoutes |
+| **middleware/** | 2 .ts | Scope guard, Token federation |
+| **org/** | 2 .ts | OrgRegistry, OrgEconomy |
+| **Outros** | 21 .ts | Server, storage, protocol, queue, router, types, etc. |
+| **Total** | **56 .ts** | Fonte principal em `lib-ts/` |
 
 ### 2.2 Testes
 
-- **579 passando** / 4 falhando / 21 suites (18 ok, 3 com falha)
-- Falhas atuais: ordering em task-store, log rotation, backup tar.gz (ambiente Termux)
-- Duração: 3.4s
+- **301 passando** / 0 falhando / 22 test files
+- Framework: Vitest 4.1
+- CI: GitHub Actions matrix (Ubuntu, Windows, macOS x Node 22, 24)
+- Duração: ~2.5s
 
 ### 2.3 Hub Online (Tulipa #1)
 
@@ -107,20 +108,30 @@ Três princípios:
 | Capability detection | ✓ Auto-detecta gpu, ssh, whatsapp, etc. |
 | Proxmox client | ✓ CRUD containers (LXC), VMs |
 
-### 2.7 O que NÃO Funciona / Falta
+### 2.7 O que foi Implementado (antes listado como "falta")
 
 | Feature | Status |
 |---------|--------|
-| Gossip discovery | ✗ Cada nó só vê peers diretos |
-| Confiança transitiva | ✗ Trust é local, não propaga |
-| Federated skill search | ✗ Busca só no registry local |
-| TaskReceipt / Ledger | ✗ Não existe registro verificável de transações |
-| Economia / Créditos | ✗ Sem contabilidade de troca |
-| Separação infra/conhecimento | ✗ Capabilities e dados misturados |
-| Canary autônomo | ✗ Sem skill canary-test |
-| Organizações | ✗ Sem agrupamento de nós |
-| Multi-owner | ✗ Um owner por nó |
-| Proxmox como peer | ✗ Config local, não via rede |
+| Gossip discovery | Implementado — BFS crawler, max 3 hops, cache TTL |
+| Confiança transitiva | Implementado — trust(A->C) = trust(A->B) x trust(B->C) x 0.7 |
+| Federated skill search | Implementado — POST /api/network/query com propagação multi-hop |
+| TaskReceipt / Ledger | Implementado — SHA-256 + Ed25519 dual-sign |
+| Economia / Créditos | Implementado — Bootstrap credits, ranking composto |
+| Separação infra/conhecimento | Implementado — requireScope + resolveScopes middleware |
+| Canary autônomo | Implementado — CanaryRunner com LXC efêmero |
+| Organizações | Implementado — Policies, invite, accept, roles |
+| Logs federados | Implementado — POST /api/network/logs (cross-machine) |
+| CI/CD cross-platform | Implementado — GitHub Actions matrix (3 OS x 2 Node) |
+
+### 2.8 O que Falta
+
+| Feature | Status |
+|---------|--------|
+| Multi-owner | Pendente — Um owner por nó |
+| Proxmox como peer | Pendente — Config local, não via rede |
+| WebSocket real-time | Pendente — Upgrade de HTTP polling para WS |
+| Mais transports | Pendente — Instagram, Discord, Slack |
+| Log level estruturado | Pendente — console.log sem nível formal |
 
 ---
 
@@ -314,18 +325,20 @@ Ranking de delegação = trust × reputation × saldo
 
 | Métrica | Valor |
 |---------|-------|
-| Linguagem | JavaScript (CommonJS) + TypeScript (tulipa-pet) |
-| Runtime | Node.js ≥ 20 |
-| Testes | 238 passando |
-| Rotas HTTP | ~70+ |
+| Linguagem | TypeScript (ES2022, strict mode) |
+| Runtime | Node.js >= 22 |
+| Testes | **301 passando** (22 test files, Vitest 4.1) |
+| CI/CD | GitHub Actions matrix (Ubuntu, Windows, macOS x Node 22, 24) |
+| Rotas HTTP | 100+ endpoints |
+| Source | 56 arquivos `.ts` em `lib-ts/` |
 | MCP Tools | 13 gateway + 2 locais (get_ledger, verify_receipt) |
-| Sprints concluídos | 9 de 9 |
-| Plataformas | Android, Linux, macOS, Windows |
+| Plataformas | Android (Termux), Linux, macOS, Windows |
 | Protocolo | HTTP + Ed25519 + Bearer tokens bilaterais |
 | Discovery | mDNS (LAN) + Hub Registry (WAN) + InfraScanner |
-| Economia | TaskReceipt (SHA-256 + Ed25519 dual-sign) implementado |
+| Economia | TaskReceipt (SHA-256 + Ed25519 dual-sign) |
 | Trust | Transitivo BFS (decay 0.7, max 3 hops, threshold 0.3) |
 | Federation | Busca distribuída + relay via hub intermediário |
+| Logs | Federados — query cross-machine via POST /api/network/logs |
 | Camadas | Infraestrutura (pública) · Conhecimento (privado) · Economia (verificável) |
 | Governança | Organizações com políticas, roles (owner/admin/member) |
 | Deploy | git pull, auto-deploy webhook, mesh deploy |
@@ -337,11 +350,9 @@ Ranking de delegação = trust × reputation × saldo
 
 Este documento serve como registro do estado do projeto Tulipa na data abaixo.
 
-**Data:** 2026-03-23
+**Data:** 2026-04-02
 **Versão:** 0.4.0
-**Commit mais recente no Hub:** `46ab073`
-**Linhas de código:** 37.353
-**Testes passando:** 579/583
+**Testes passando:** 301/301
 
 Para verificar a integridade deste registro, o hash SHA-256 do commit HEAD do repositório pode ser consultado a qualquer momento via:
 ```bash
@@ -351,4 +362,4 @@ curl -s https://agent.coolgroove.com.br/mcp -H "Authorization: Bearer <token>" \
 
 ---
 
-*Registrado por Tulio Silva — CoolGroove / Teatro Mars — 23 de março de 2026.*
+*Registrado por Tulio Silva — CoolGroove / Teatro Mars — 2 de abril de 2026.*

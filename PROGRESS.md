@@ -1,7 +1,7 @@
 # Tulipa Mesh — Progresso de Desenvolvimento
 
-> Atualizado: 2026-03-23
-> Branch: `claude/tulipa-agent-connection-yZLs6`
+> Atualizado: 2026-04-02
+> Branch: `claude/e2e-testing-windows-issues-WPjHF`
 
 ---
 
@@ -13,152 +13,147 @@
 |---|---|---|
 | Gateway MCP (Tulipa #1) | `https://agent.coolgroove.com.br` | Online |
 | Agent ID | `agent_00726da6-5b9e-4d63-afcd-2f04c9572ebc` | Hub Mode |
-| Servidor 2070 (peer LAN) | `http://192.168.15.15:18800` | Online (degraded - sem supervisor) |
+| Servidor 2070 (peer LAN) | `http://192.168.15.15:18800` | Online (Windows, win32 x64) |
 | Peer ID | `agent_cd1454ae-dcaa-4aaf-a203-022625a37765` | Trusted |
-| Token | `tulipa_2a54...1474e23615b6c21c2e90` | Ativo |
-| Remote Token (p/ Servidor 2070) | `tulipa_peer_f798...fbc70fc8` | Ativo |
+
+### Stack Técnico
+
+| Item | Valor |
+|---|---|
+| Linguagem | TypeScript (ES2022, strict mode) |
+| Runtime | Node.js >= 22 |
+| Framework | Express 4 |
+| Testes | Vitest 4.1 — **301 passando** (22 test files) |
+| CI/CD | GitHub Actions (matrix: Ubuntu, Windows, macOS x Node 22, 24) |
+| Build | tsc (tsconfig.build.json) |
+| Source | 56 arquivos `.ts` em `lib-ts/` |
 
 ### Fases implementadas
 
 | Fase | Status | Detalhes |
 |---|---|---|
-| 1. Transport Base + WhatsApp | ✅ Completa | 4 transports: WhatsApp, Telegram, Email, Webhook |
-| 2. Queue + Router | ✅ Completa | Fila persistente JSON + failover multi-canal |
-| 3. Telegram Transport | ✅ Completa | Bot API com polling |
-| 4. Mesh P2P | ✅ Completa | Discovery, registry, heartbeat, endpoint HTTP |
-| 5. Mais transports | ⏳ Pendente | Instagram, Discord, Slack |
+| 1. Transport Base + WhatsApp | Completa | 4 transports: WhatsApp, Telegram, Email, Webhook |
+| 2. Queue + Router | Completa | Fila persistente JSON + failover multi-canal |
+| 3. Telegram Transport | Completa | Bot API com polling |
+| 4. Mesh P2P | Completa | Discovery, registry, heartbeat, endpoint HTTP |
+| 5. sendPrompt P2P | Completa | 3 estratégias com fallback (HTTP -> gateway -> MCP) |
+| 6. Hub Consensus | Completa | Council, voting, quorum, election |
+| 7. TaskReceipt + Ledger | Completa | SHA-256 + Ed25519 dual-sign |
+| 8. Infra + Conhecimento | Completa | Scanner, adoption, capabilities |
+| 9. Canary Autônomo | Completa | Workflow completo, LXC efêmero |
+| 10. Gossip + Trust | Completa | BFS crawler, trust transitivo |
+| 11. Federation + Relay | Completa | Busca distribuída, relay via hub |
+| 12. Economia | Completa | Bootstrap credits, ranking composto |
+| 13. Organizações | Completa | Policies, invite, roles |
+| 14. Logs Federados | Completa | Query local + federada cross-machine |
+| 15. CI/CD Cross-Platform | Completa | GitHub Actions matrix (3 OS x 2 Node) |
 
-### Arquivos do projeto
+### Estrutura do Projeto
 
 ```
-lib/
-├── mesh/
-│   ├── index.js      (14 KB)  — MeshManager: discovery, heartbeat, P2P
-│   └── registry.js   (4.3 KB) — PeerRegistry: estado dos peers
-├── transport/
-│   ├── base.js       (1.7 KB) — Classe abstrata Transport
-│   ├── whatsapp.js   (5.2 KB) — WhatsApp via MCP gateway
-│   ├── telegram.js   (5.0 KB) — Telegram Bot API
-│   ├── email.js      (5.0 KB) — Gmail/Email via MCP
-│   └── webhook.js    (7.2 KB) — HTTP webhook genérico
-├── protocol.js       (3.1 KB) — Protocolo v1, 8 tipos de mensagem
-├── queue.js          (5.3 KB) — Fila com retry + backoff exponencial
-└── router.js         (3.8 KB) — Router multi-canal com fallback
-server.js             (35 KB)  — Express app, 24+ rotas, watchdog, service registry
-test/                          — 78 testes (todos passando)
-```
+lib-ts/                          # 56 arquivos TypeScript
+├── server.ts                    # Express app principal
+├── handlers/                    # Route handlers (11 arquivos)
+│   ├── core-routes.ts           # Health, status, logs, MCP proxy
+│   ├── mesh-routes.ts           # P2P mesh
+│   ├── transport-routes.ts      # WhatsApp, Telegram, Email, Webhook
+│   ├── hub-routes.ts            # Hub consensus, voting
+│   ├── capabilities-routes.ts   # Knowledge registry
+│   ├── infra-routes.ts          # Infrastructure scanning
+│   ├── org-economy-routes.ts    # Organizações & ledger
+│   ├── services-deploy-routes.ts # Deploy
+│   ├── log-routes.ts            # Logs federados
+│   └── index.ts
+├── mesh/                        # Rede P2P
+│   ├── mesh-manager.ts          # Discovery, heartbeat, comunicação
+│   ├── peer-registry.ts         # Registro de peers
+│   ├── federation.ts            # Busca federada
+│   ├── crawler.ts               # BFS network crawler
+│   ├── hub-role.ts              # Hub state machine
+│   ├── hub-council.ts           # Consensus & voting
+│   ├── log-query.ts             # Tipos de log query
+│   ├── log-query-service.ts     # Query local (SQLite + file logs)
+│   ├── federated-log-query.ts   # Query federada cross-machine
+│   └── mesh-proxy.ts            # Proxy routing
+├── transport/                   # 4 canais de comunicação
+│   ├── whatsapp.ts, telegram.ts, email.ts, webhook.ts
+├── ledger/                      # Economia
+│   ├── ledger.ts, receipt.ts, dashboard.ts
+├── infra/                       # Infraestrutura
+│   ├── infra-scanner.ts, infra-adopt.ts, canary.ts
+├── middleware/                  # Auth & tokens
+│   ├── scope-guard.ts, token-federation.ts
+├── storage.ts                   # SQLite (audit_log, tasks, peers, messages)
+├── protocol.ts                  # Protocolo v1 (13 tipos de mensagem)
+├── router.ts                    # Router multi-canal com fallback
+├── queue.ts                     # Fila com retry exponencial
+├── task-engine.ts               # Decomposição & delegação de tasks
+├── identity.ts                  # Ed25519 identity
+└── types.ts                     # Interfaces TypeScript
 
-### Testes: 78/78 passando
+test/                            # 22 test files (301 testes)
+├── log-query.test.ts            # Logs federados (19 testes)
+├── federation.test.ts           # Busca federada
+├── mesh.test.ts                 # Rede P2P
+├── trust.test.ts                # Grafo de confiança
+├── protocol.test.ts             # Protocolo de mensagens
+├── infra.test.ts                # Scanner de infra
+├── ledger.test.ts               # Economia
+├── org.test.ts                  # Organizações
+├── ...e mais 14 arquivos
+└── manual.sh                    # Testes E2E via curl
+
+.github/workflows/test.yml      # CI matrix (Ubuntu, Windows, macOS)
+```
 
 ---
 
-## O que foi feito (cronológico)
+## Histórico de Sessões
 
 ### Sessão 1 — Base da rede
 - Proxy API REST para WhatsApp e MCP tools
 - Auth Bearer passthrough
-- Tratamento de erro quando MCP offline
 - Watchdog com alertas WhatsApp
 
 ### Sessão 2 — Transport Layer
+- 4 transports: WhatsApp, Telegram, Email, Webhook
 - Classe abstrata Transport com interface padronizada
-- WhatsApp transport via `send_whatsapp` / `get_whatsapp_history`
-- Telegram transport via Bot API
-- Email transport via Gmail MCP
-- Webhook transport genérico (Slack, Discord, n8n, etc.)
 
 ### Sessão 3 — Protocol + Queue + Router
 - Protocolo v1: PING, PONG, STATUS, ALERT, CMD, MSG, DISCOVER, ANNOUNCE
-- Fila persistente com retry exponencial (2s→4s→8s→16s→32s)
-- Router com seleção por prioridade e fallback automático
-- NODE_ID persistente em `data/node-id`
+- Fila persistente com retry exponencial
+- Router com seleção por prioridade e fallback
 
 ### Sessão 4 — Mesh P2P
 - PeerRegistry com TTL (stale 5min, dead 15min)
-- MeshManager: discovery via `list_peers`, heartbeat periódico
-- Rotas: `/api/mesh`, `/api/mesh/peers`, `/api/mesh/discover`, etc.
-- Integração completa no server.js
+- MeshManager: discovery, heartbeat, endpoint HTTP
 
-### Sessão 5 (atual) — P2P real + fix gateway
-- **Diagnóstico 502**: EADDRINUSE na porta 18800 durante restart
-- **Fix**: `services.yaml` do gateway atualizado com `fuser -k 18800/tcp` + delay 5s
-- **P2P testado com sucesso**: Servidor 2070 respondeu PONG via `POST /api/message`
-- **Protocolo P2P descoberto**: `POST /api/message` + `Authorization: Bearer <remoteToken>`
-- **_sendToPeerRaw**: agora tenta HTTP direto → mesh incoming → relay
-- **_discoverPeerEndpoints**: extrai IPs de logs mDNS do gateway
-- **POST /api/mesh/peers/:nodeId**: registrar endpoint manualmente
+### Sessão 5 — P2P real + fix gateway
+- Fix EADDRINUSE na porta 18800
+- P2P testado com sucesso: Servidor 2070 respondeu PONG
 
----
+### Sessão 6 — sendPrompt P2P
+- 3 estratégias com fallback: HTTP direto -> gateway relay -> send_prompt MCP
+- Teste E2E: "Quanto é 2+2?" -> Servidor 2070 respondeu "4"
 
-## Sessão 6 — sendPrompt P2P (concluído)
+### Sessão 7 — Diagnóstico Servidor 2070 + Paridade
+- Windows (win32 x64), Node v24.12.0
+- IPC fix: Unix socket -> Windows named pipe (`\\.\pipe\tulipa-supervisor`)
+- Hub mode ativado, supervisor rodando
+- config/services-windows.yaml criado
 
-- `mesh.sendPrompt(nodeId, prompt, { systemPrompt, model, timeoutMs })` implementado
-- 3 estratégias com fallback: HTTP direto → gateway relay → send_prompt MCP
-- `POST /api/mesh/prompt/:nodeId` — rota REST
-- Teste E2E: "Quanto é 2+2?" → Servidor 2070 respondeu "4"
-- 6 testes unitários (84 total, todos passando)
+### Sessão 8 — Migração TypeScript
+- Migração completa de JS (lib/) para TS (lib-ts/)
+- 282 testes passando com Vitest
+- Strict mode, ES2022
 
-## Sessão 7 — Diagnóstico Servidor 2070 + Paridade
-
-### Descobertas sobre o Servidor 2070
-- **Plataforma**: Windows (win32 x64), Node v24.12.0
-- **Gateway**: 0.1.0 (Tulipa #1 é 0.4.0) — 3 versões atrás
-- **Hub mode**: false (nó comum)
-- **Supervisor**: NÃO rodando
-- **Logs**: NÃO persistentes
-- **Auto-deploy**: NÃO configurado
-- **Token peer scopes**: [read, write, peer] — sem admin
-- **MCP**: Funcionando (12 tools), mas run_command bloqueado sem admin
-- **Tokens existentes**: bootstrap, owner, owner-session
-
-### Hub Mode — Como funciona
-- `hubMode` é booleano no `~/.tulipa/network/identity.json`
-- Ativar: `tulipa network hub enable`
-- Hub mantém Registry global de peers, expõe `/api/network/registry`
-- Qualquer nó pode ser hub — não é exclusivo
-- Hub pode intermediar msgs entre peers que não se conhecem
-
-### O que falta para paridade
-1. Token admin no 2070 (obter via terminal local)
-2. `git pull origin main` (atualizar 0.1.0 → 0.4.0)
-3. Compilar TypeScript (todos os módulos)
-4. Criar `services.yaml` (template pronto em config/services-windows.yaml)
-5. Ativar hub mode (`tulipa network hub enable`)
-6. Iniciar via supervisor (`tulipa up`)
-
-### Arquivos criados
-- `config/services-windows.yaml` — template de serviços para Windows
-- `scripts/setup-2070.sh` — script de setup local
-- `scripts/deploy-to-2070.sh` — deploy remoto via MCP (precisa admin token)
-
-### Blocker (RESOLVIDO)
-Token admin criado manualmente no 2070: `tulipa_4d30...d79b` (tok_xxx, scope [read,write,admin]).
-Tokens no 2070 são hasheados — valor original só aparece na criação.
-
-### Setup executado no 2070 (COMPLETO)
-1. git init + fetch + reset --hard origin/main → **v0.4.0**
-2. npm install + typescript instalado
-3. network compilado (--skipLibCheck)
-4. supervisor compilado
-5. gateway: dist/ do git (erros TS non-critical, JS funcional)
-6. Hub mode: **ATIVO** (hubMode: true)
-7. Supervisor: **RODANDO** (com fix named pipe para Windows)
-8. IPC fix: Unix socket → Windows named pipe (`\\.\pipe\tulipa-supervisor`)
-9. services.yaml: gateway adicionado, whatsapp-bridge desabilitado
-10. Status: **ok** (gateway ok + supervisor ok)
-
-### Handshake fix
-- `mesh.requestAdminToken(nodeId)` — solicita create_token no peer via MCP
-- `POST /api/mesh/admin-token/:nodeId` — rota REST
-- Salva adminToken no registry do peer
-- Problema: no peering original, só trocaram tokens peer [read,write,peer]
-  sem trocar admin token para gerenciamento remoto
-
-### Depois disso
-- TaskReceipt + Ledger (Sprint 2) — contabilidade de tarefas
-- WebSocket real-time — upgrade de HTTP polling para WS persistente
-- Separação Infra vs Knowledge (Sprint 3)
-- Mais transports (Instagram, Discord)
+### Sessão 9 — Logs Federados + CI/CD (atual)
+- Sistema de log query distribuído: `POST /api/logs/query` (local) + `POST /api/network/logs` (federado)
+- LogQueryService: consulta SQLite audit_log + tail de ~/.tulipa/logs/*.log
+- FederatedLogQuery: propagação para todos peers com dedup, rate limit, timeout
+- 19 novos testes (301 total)
+- GitHub Actions workflow com matrix strategy (3 OS x 2 Node)
+- Documentação completa atualizada
 
 ---
 
@@ -166,6 +161,7 @@ Tokens no 2070 são hasheados — valor original só aparece na criação.
 
 - Gateway health: `GET https://agent.coolgroove.com.br/api/health`
 - MCP endpoint: `POST https://agent.coolgroove.com.br/mcp` (JSON-RPC 2.0)
-- Servidor 2070 agent.json: `http://192.168.15.15:18800/.well-known/agent.json`
-- Dashboard: servidor Express local na porta 3000
-- Docs: `PROJETO-TULIPA-MESH.md`, `PROJETO-TULIPA.md`, `CLAUDE.md`
+- Servidor 2070: `http://192.168.15.15:18800/.well-known/agent.json`
+- Dashboard: `http://localhost:3000/`
+- CI: `.github/workflows/test.yml`
+- Docs: `CLAUDE.md`, `PROJETO-TULIPA.md`, `PROJETO-TULIPA-MESH.md`
