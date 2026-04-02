@@ -9,3 +9,4 @@ export { registerCapabilitiesRoutes } from './capabilities-routes.js';
 export { registerInfraRoutes } from './infra-routes.js';
 export { registerOrgEconomyRoutes } from './org-economy-routes.js';
 export { registerServicesDeployRoutes } from './services-deploy-routes.js';
+export { registerLogRoutes } from './log-routes.js';

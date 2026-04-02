@@ -40,6 +40,7 @@ const SCHEMA_STMTS: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp)`,
   `CREATE INDEX IF NOT EXISTS idx_audit_event ON audit_log(event)`,
+  `CREATE INDEX IF NOT EXISTS idx_audit_source ON audit_log(source)`,
 ];
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -573,6 +574,51 @@ export class Storage {
     if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
     sql += ' ORDER BY timestamp DESC LIMIT ?';
     vals.push(options.limit || 100);
+    return this._adapter!.all(sql, ...vals).map(row => {
+      const r = row as Record<string, unknown>;
+      return {
+        id: r.id as number,
+        timestamp: r.timestamp as string,
+        event: r.event as string,
+        source: r.source as string | null,
+        target: r.target as string | null,
+        details: JSON.parse((r.details as string) || '{}'),
+        signature: r.signature as string | null,
+      };
+    });
+  }
+
+  queryLogs(options: {
+    since?: string; until?: string; events?: string[];
+    source?: string; component?: string; search?: string;
+    limit?: number; offset?: number;
+  } = {}): AuditEntry[] {
+    let sql = 'SELECT * FROM audit_log';
+    const conditions: string[] = [];
+    const vals: unknown[] = [];
+    if (options.since) { conditions.push('timestamp >= ?'); vals.push(options.since); }
+    if (options.until) { conditions.push('timestamp <= ?'); vals.push(options.until); }
+    if (options.events && options.events.length > 0) {
+      conditions.push(`event IN (${options.events.map(() => '?').join(',')})`);
+      vals.push(...options.events);
+    }
+    if (options.source) { conditions.push('source = ?'); vals.push(options.source); }
+    if (options.component) {
+      conditions.push('(event LIKE ? OR details LIKE ?)');
+      vals.push(`%${options.component}%`, `%${options.component}%`);
+    }
+    if (options.search) {
+      conditions.push('details LIKE ?');
+      vals.push(`%${options.search}%`);
+    }
+    if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
+    sql += ' ORDER BY timestamp DESC';
+    sql += ` LIMIT ?`;
+    vals.push(options.limit || 100);
+    if (options.offset) {
+      sql += ` OFFSET ?`;
+      vals.push(options.offset);
+    }
     return this._adapter!.all(sql, ...vals).map(row => {
       const r = row as Record<string, unknown>;
       return {

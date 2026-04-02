@@ -39,6 +39,10 @@ import { registerCapabilitiesRoutes } from './handlers/capabilities-routes.js';
 import { registerInfraRoutes } from './handlers/infra-routes.js';
 import { registerOrgEconomyRoutes } from './handlers/org-economy-routes.js';
 import { registerServicesDeployRoutes } from './handlers/services-deploy-routes.js';
+import { registerLogRoutes } from './handlers/log-routes.js';
+import { LogQueryService } from './mesh/log-query-service.js';
+import { FederatedLogQuery } from './mesh/federated-log-query.js';
+import Storage from './storage.js';
 
 import type { ServerDeps, ServiceEntry, CallMcpToolFn } from './types.js';
 
@@ -384,6 +388,27 @@ registerOrgEconomyRoutes(app, {
 } as any);
 
 registerServicesDeployRoutes(app, deps);
+
+// ─── Log Query (Federated) ──────────────────────────────────────────────────
+
+const logStorage = new Storage();
+const logQueryService = new LogQueryService({
+  storage: logStorage as any,
+  nodeId: protocol.NODE_ID,
+  nodeName: protocol.NODE_NAME,
+});
+const federatedLogQuery = new FederatedLogQuery({
+  localService: logQueryService,
+  nodeId: protocol.NODE_ID,
+  registry: mesh.registry as any,
+  fetch: proxyFetch as any,
+});
+
+registerLogRoutes(app, {
+  requireAuth,
+  logQueryService,
+  federatedLogQuery,
+} as any);
 
 // ─── Startup ─────────────────────────────────────────────────────────────────
 
