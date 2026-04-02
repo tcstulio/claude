@@ -17,6 +17,12 @@ venv/
 *.swp
 *.swo
 
+# Node
+node_modules/
+
+# Data (local SQLite, logs)
+data/
+
 # OS
 .DS_Store
 Thumbs.db
