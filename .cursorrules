@@ -1,0 +1,57 @@
+# Tulipa — Instruções para Cursor
+
+## Sobre o projeto
+
+Tulipa é uma rede distribuída de agentes IA com identidade criptográfica (Ed25519), comunicação multi-canal (WhatsApp, Telegram, Email, Webhook) e economia verificável (TaskReceipts com dupla assinatura).
+
+Autor: Tulio Silva (CoolGroove / Teatro Mars)
+Contato: tcstulio@gmail.com
+
+## Stack
+
+- Linguagem: TypeScript (ES2022, strict mode)
+- Runtime: Node.js >= 22
+- Framework: Express 4
+- Testes: Vitest 4.1 — 301 testes, 22 test files
+- CI: GitHub Actions matrix (Ubuntu, Windows, macOS x Node 22, 24)
+- DB: SQLite (better-sqlite3 / sql.js fallback)
+
+## Estrutura
+
+- lib-ts/ — Fonte principal (56 arquivos .ts)
+- lib-ts/server.ts — Express app (100+ endpoints)
+- lib-ts/handlers/ — Rotas HTTP (11 módulos)
+- lib-ts/mesh/ — Rede P2P (discovery, federation, logs federados)
+- lib-ts/transport/ — WhatsApp, Telegram, Email, Webhook
+- lib-ts/ledger/ — TaskReceipt + economia
+- lib-ts/infra/ — Scanner, adoption, canary
+- lib-ts/middleware/ — Auth, scope guard, token federation
+- lib-ts/types.ts — Interfaces TypeScript
+- test/ — 22 test files (Vitest)
+
+## Convenções
+
+- Idioma: português (BR)
+- Imports com extensão .js (ESM, type: "module")
+- Interfaces centralizadas em lib-ts/types.ts
+- Padrão handler: registerXxxRoutes(app, deps)
+- Testes: describe/it/expect do Vitest
+- Nunca expor tokens completos — referir pelos últimos 8 chars
+
+## Comandos
+
+- npm test — Rodar testes (Vitest)
+- npm run typecheck — Verificar tipos
+- npm run build — Compilar para dist/
+- npm run dev — Modo watch
+
+## Gateway MCP
+
+- Endpoint: https://agent.coolgroove.com.br
+- Auth: Authorization: Bearer <token>
+- Protocolo: JSON-RPC 2.0 via POST /mcp
+- 12 MCP tools: get_status, list_peers, send_prompt, run_command, send_whatsapp, etc.
+
+## Owner
+
+Tulio Silva (tcstulio@gmail.com)
